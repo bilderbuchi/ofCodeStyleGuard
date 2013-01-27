@@ -1,0 +1,8 @@
+*.pyc
+*.cache
+*~
+
+
+auths.json
+misc
+last_payload.json
