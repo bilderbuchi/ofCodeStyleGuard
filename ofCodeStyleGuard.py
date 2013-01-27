@@ -16,11 +16,12 @@ urls = (
 
 class PR_handler(threading.Thread):
 	"""Threaded PR Worker"""
+	
 	def __init__(self, queue):
 		logger.debug("Starting PR worker thread")
 		threading.Thread.__init__(self)
 		self.queue = queue
-		logger.debug("self.queue size: " + str(self.queue.qsize()))
+		
 	def run(self):
 		while True:
 			logger.info("Waiting in worker run()")
@@ -37,15 +38,36 @@ class PR_handler(threading.Thread):
 			logger.debug("self.queue size: " + str(self.queue.qsize()))
 			
 	def validate_PR(self,payload):
-		logger.debug('Verifying information from payload')
-		verified = (payload['repository']['git_url'] == my_config['repo_git_url'])
-		verified = verified and (payload['action'] != 'closed')
-		verified = verified and (payload['pull_request']['merged'] == False)
+		logger.info('Verifying information from payload')
+		if payload['repository']['git_url'] == my_config['repo_git_url']:
+			verified = True
+		else:
+			verified = False
+			logger.warning('PR git_url ' + payload['repository']['git_url'] + ' does not match config: ' + my_config['repo_git_url'])
+		if payload['action'] != 'closed':
+			verified = verified and True
+		else:
+			verified = False
+			logger.warning('PR is closed!')
+		if payload['pull_request']['merged'] == False:
+			verified = verified and True
+		else:
+			verified = False
+			logger.warning('PR is merged!')
 		if payload['pull_request']['mergeable'] != True:
-			# It's possible that mergeable is incorrectly false. Maybe due to being set after firing off the POST request
+			# It's possible that mergeable is incorrectly false.
+			# Maybe due to being set by a check procedure after firing off the POST request?
+			
 			# TODO: check again online, if not, then mergeable = False
 			mergeable = True # this is wrong for now
-			pass
+			logger.warning('PR is not mergeable')
+			
+			# sleep(5)
+			# if check_online():
+			#	mergeable = True
+			#else:
+			#	mergeable = False
+			#	logger.warning('PR is not mergeable')
 		else:
 			mergeable = True
 		verified = verified and mergeable
@@ -124,4 +146,5 @@ def main():
 	my_queue.join()
 	
 if __name__ == "__main__":
-	main()	
+	main()
+
