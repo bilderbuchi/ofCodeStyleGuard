@@ -160,10 +160,15 @@ class my_endpoint:
 			return
 		else:
 			logger.debug("Origin of request: " + web.ctx.ip)
-		payload=json.loads(web.input()['payload'])
-		# TODO: load mock json directly when coming from localhost
-#		with open('requestfile.txt','w') as requestfile:
-#			requestfile.write(str(web.input()))
+		try:
+			payload=json.loads(web.input()['payload'])
+		except KeyError as e:
+			# crutch: if an invalid request arrives locally, load a json file directly
+			if web.ctx.ip == '127.0.0.1':
+				with open('sample_payload.json') as sample:
+					payload = json.load(sample)
+			else:
+				raise
 #		logging.debug('POST my_queue id: ' + str(id(my_queue)))
 		self.handle_payload(payload,my_queue)
 		return
