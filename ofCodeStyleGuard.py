@@ -2,7 +2,6 @@
 import web
 import logging
 import json
-import Queue
 import threading
 import sys
 import os
@@ -64,10 +63,10 @@ class PR_handler(threading.Thread):
 #			TODO: implement this
 			return 1
 		else:
-			logging.error("Unknown feedback method: " + str(myconfig['feedback_method']))
+			logging.error("Unknown feedback method: " + str(my_config['feedback_method']))
 			return 1
 			
-	def validate_PR(self,payload):
+	def validate_PR(self, payload):
 		logger.info('Verifying information from payload')
 		if payload['repository']['git_url'] == my_config['repo_git_url']:
 			verified = True
@@ -119,8 +118,7 @@ class PR_handler(threading.Thread):
 #		payload['pull_request']['base']['ref'] -> master
 #		
 #		payload['pull_request']['head']['sha'] -> last commit
-		pass
-	
+		
 	def check_style(self):
 		#* *optional*: perform code style of OF itself to determine initial state
 		#* perform code style analysis on PR. 
@@ -137,7 +135,7 @@ class PR_handler(threading.Thread):
 		elif my_config['feedback_method'] is "comment":
 			self.add_comment()
 		else:
-			logging.error("Unknown feedback method: " + str(myconfig['feedback_method']))
+			logging.error("Unknown feedback method: " + str(my_config['feedback_method']))
 	
 	def add_status(self):
 #		commits=user.get_repo('openFrameworks').get_pull(1).get_commits()
@@ -161,8 +159,8 @@ class my_endpoint:
 		else:
 			logger.debug("Origin of request: " + web.ctx.ip)
 		try:
-			payload=json.loads(web.input()['payload'])
-		except KeyError as e:
+			payload = json.loads(web.input()['payload'])
+		except KeyError:
 			# crutch: if an invalid request arrives locally, load a json file directly
 			if web.ctx.ip == '127.0.0.1':
 				with open('sample_payload.json') as sample:
@@ -170,7 +168,7 @@ class my_endpoint:
 			else:
 				raise
 #		logging.debug('POST my_queue id: ' + str(id(my_queue)))
-		self.handle_payload(payload,my_queue)
+		self.handle_payload(payload, my_queue)
 		return
 	
 	def handle_payload(self,payload,queue):
@@ -186,7 +184,7 @@ def main():
 	if len(sys.argv) == 1:
 		sys.argv.append(str(my_config['local_port']))
 	threaded_pr_worker = PR_handler(my_queue)
-	threaded_pr_worker.daemon=True
+	threaded_pr_worker.daemon = True
 	threaded_pr_worker.start()
 #	logging.debug('outer my_queue id: ' + str(id(my_queue)))
 	app = web.application(urls, globals())
