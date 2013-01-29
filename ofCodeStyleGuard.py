@@ -5,6 +5,8 @@ import json
 import Queue
 import threading
 import sys
+import os
+from github import Github
 from time import sleep
 from styleguard_module import my_config, my_queue
 
@@ -21,6 +23,11 @@ class PR_handler(threading.Thread):
 		logger.debug("Starting PR worker thread")
 		threading.Thread.__init__(self)
 		self.queue = queue
+		self.basedir = os.getcwd() #base directory
+		self.API_Github = self.init_authentication()
+		if self.API_Github == 1:
+			logger.critical('Initialization failed. Aborting.')
+			sys.exit()
 		
 	def run(self):
 		while True:
@@ -32,10 +39,33 @@ class PR_handler(threading.Thread):
 				self.git_process_PR()
 				self.check_style()
 				self.publish_results()
+				self.teardown()
 			sleep(5)
 			self.queue.task_done()
 			logger.info("Finished processing payload PR " + str(payload["number"]))
 			logger.debug("self.queue size: " + str(self.queue.qsize()))
+			
+	def init_authentication(self):
+		logger.info('Creating API-authenticated user')
+		with open(my_config['authfile'],'r') as authfile:
+			auths_temp = json.load(authfile)
+		if my_config['feedback_method'] == "status":
+			if all(scope in auths_temp['Codestyle_status_access']['scopes'] for scope in ['repo:status','gist']):
+				# Create authorized PyGithub Github API instance
+				API_Github = Github(auths_temp['Codestyle_status_access']['token'])
+#					TODO: Verification of authentication
+#					possibly by catching an exception when checking out the base repo
+				return API_Github
+			else:
+				logging.error('Could not authenticate for Status API with auth Codestyle_status_access')
+				return 1
+		elif my_config['feedback_method'] == "comment":
+			logging.critical('Comment authorization not yet implemented!')
+#			TODO: implement this
+			return 1
+		else:
+			logging.error("Unknown feedback method: " + str(myconfig['feedback_method']))
+			return 1
 			
 	def validate_PR(self,payload):
 		logger.info('Verifying information from payload')
@@ -54,22 +84,19 @@ class PR_handler(threading.Thread):
 		else:
 			verified = False
 			logger.warning('PR is merged!')
-		if payload['pull_request']['mergeable'] != True:
+		if payload['pull_request']['mergeable'] == True:
+			mergeable = True	
+		else:
 			# It's possible that mergeable is incorrectly false.
 			# Maybe due to being set by a check procedure after firing off the POST request?
-			
-			# TODO: check again online, if not, then mergeable = False
-			mergeable = True # this is wrong for now
-			logger.warning('PR is not mergeable')
-			
-			# sleep(5)
-			# if check_online():
-			#	mergeable = True
-			#else:
-			#	mergeable = False
-			#	logger.warning('PR is not mergeable')
-		else:
-			mergeable = True
+			# check again online, if not, then mergeable = False
+			logger.info("Re-checking if PR is mergeable")
+			sleep(5)
+			if self.API_Github.get_repo(payload['repository']['full_name']).get_pull(payload['pull_request']['number']).mergeable == True:
+				mergeable = True
+			else:
+				mergeable = False
+				logger.warning('PR is not mergeable')
 		verified = verified and mergeable
 		
 		if not verified:
@@ -79,7 +106,19 @@ class PR_handler(threading.Thread):
 		return verified
 	
 	def git_process_PR(self):
-		#* if PR in question is mergeable, pull down and merge. Should be possible without `PyGithub`.
+		#* if PR in question is mergeable, pull down and merge.
+		logger.info('Starting git processing of PR')
+		os.chdir(self.basedir)
+		os.chdir(my_config['repo_local_path'])
+		logging.debug('In directory ' + str(os.getcwd()))
+		
+#		payload['pull_request']['head']['repo']['ssh_url']
+#		payload['pull_request']['head']['ref'] -> testbranch
+#		
+#		payload['pull_request']['base']['repo']['ssh_url']
+#		payload['pull_request']['base']['ref'] -> master
+#		
+#		payload['pull_request']['head']['sha'] -> last commit
 		pass
 	
 	def check_style(self):
@@ -99,18 +138,20 @@ class PR_handler(threading.Thread):
 			self.add_comment()
 		else:
 			logging.error("Unknown feedback method: " + str(myconfig['feedback_method']))
-		pass
 	
 	def add_status(self):
+#		commits=user.get_repo('openFrameworks').get_pull(1).get_commits()
+	#c.create_status(state='success',description='somestatus',target_url='http://sdfsdite.com')
 		pass
 	
 	def add_comment(self):
-		pass
+		logging.critical('Feedback via comments not yet implemented. Aborting.')
+		sys.exit()
+		
+	def teardown(self):
+		os.chdir(self.basedir)
 
 class my_endpoint:
-#	def GET(self):
-#		pass
-#		#return "Hello, world!"
 
 	def POST(self):
 		logger.info("Received POST request.")
@@ -119,8 +160,10 @@ class my_endpoint:
 			return
 		else:
 			logger.debug("Origin of request: " + web.ctx.ip)
-
 		payload=json.loads(web.input()['payload'])
+		# TODO: load mock json directly when coming from localhost
+#		with open('requestfile.txt','w') as requestfile:
+#			requestfile.write(str(web.input()))
 #		logging.debug('POST my_queue id: ' + str(id(my_queue)))
 		self.handle_payload(payload,my_queue)
 		return
@@ -129,8 +172,8 @@ class my_endpoint:
 		"""	Queue new PRs coming in during processing"""
 		logger.debug('PR nr ' + str(payload['number']) + ': ' + payload['pull_request']['title'])
 		with open('last_payload.json', 'w') as outfile:
-	  		json.dump(payload, outfile, indent=1)
-		logger.debug("handling payload")
+	  		json.dump(payload, outfile, indent=2)
+		logger.debug("handing payload off to queue")
 		queue.put(payload)
 		logger.debug("queue size: " + str(queue.qsize()))
 	
