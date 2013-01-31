@@ -34,6 +34,9 @@ class PrHandler(threading.Thread):
 		self.basedir = os.getcwd()  # base directory
 		self.repodir = os.path.abspath(os.path.join(self.basedir,
 													my_config['repo_local_path']))
+		self.stylerdir = os.path.abspath(os.path.join(self.basedir,
+													my_config['style_tool_path']))
+		# TODO: Verify uncrustify minimum version
 		self.api_github = self.init_authentication()
 		if self.api_github == 1:
 			logger.critical('Initialization failed. Aborting.')
@@ -209,12 +212,21 @@ class PrHandler(threading.Thread):
 		logger.debug('Filtered list of files to be style-checked:')
 		for tmp_f in file_list:
 			logger.debug(tmp_f)
+		logger.info('Styling files')
+		for tmp_file in file_list:
+			style_file(os.path.abspath(os.path.join(self.repodir, tmp_file)),
+						self.stylerdir)
+		logger.info('Finished styling')
+		# check if styling changed any files
+		if git_command('status --porcelain', self.repodir, True, False):
+			patch_file_name = 'pr-' + str(self.payload['pull_request']['number']) + '.patch'
+			with open(patch_file_name, 'w') as patchfile:
+				# OK to use git diff since only text files will be modified
+				patchfile.write(git_command('diff', self.repodir, True, False))
+		# now, reset HEAD so that the repo is clean again
+		git_command('reset --hard HEAD', self.repodir)
 
 		# *optional*: perform code style of OF itself to determine initial state
-		# perform code style analysis on PR.
-
-		# determine if changes were necessary. If yes, formulate `diff` or
-		# `patch` with the needed corrections.
 		# This could be stored in gists.
 		# Clean up list of changed files
 
@@ -249,21 +261,37 @@ class PrHandler(threading.Thread):
 #		logger.debug(self.repo.delete_head(D=self.integration_branch_name))
 
 
-def git_command(argument_string, repo_dir, return_output=False):
+def git_command(arg_string, repo_dir, return_output=False, log_output=True):
 	"""Execute git command in repo_dir and log output to logger"""
 	try:
 		# the argument string has to be split if Shell==False in check_output
-		output = subprocess.check_output(shlex.split('git ' + argument_string),
+		output = subprocess.check_output(shlex.split('git ' + arg_string),
 										stderr=subprocess.STDOUT, cwd=repo_dir)
-		logger.debug(output)
+		if output and log_output:
+			logger.debug(output)
 		if return_output:
 			return output
+	except subprocess.CalledProcessError as exc:
+		if log_output:
+			logger.error(exc.cmd + ' failed with exit status ' +
+						exc.returncode + ':')
+			logger.error(exc.output)
+		if return_output:
+			return exc.output
+
+
+def style_file(my_file, style_tool_dir):
+	""" Call style tool on file and log output to logger"""
+	try:
+		# the argument string has to be split if Shell==False in check_output
+		output = subprocess.check_output(shlex.split('.' + os.path.sep + 'ofStyler ' + my_file),
+										stderr=subprocess.STDOUT, cwd=style_tool_dir)
+		if output:
+			logger.debug(output)
 	except subprocess.CalledProcessError as exc:
 		logger.error(exc.cmd + ' failed with exit status ' +
 					exc.returncode + ':')
 		logger.error(exc.output)
-		if return_output:
-			return exc.output
 
 
 class My_endpoint:
