@@ -52,8 +52,8 @@ class PR_handler(threading.Thread):
 			self.payload = self.queue.get()
 			logger.info("Aquired new payload: PR " + str(self.payload["number"]))
 			if self.validate_PR():
-				self.git_process_PR()
-				self.check_style()
+				changed_files = self.git_process_PR()
+				self.check_style(changed_files)
 				self.publish_results()
 				sleep(5)
 				self.teardown()
@@ -176,21 +176,42 @@ class PR_handler(threading.Thread):
 			# maybe:
 			# git checkout -B pr-7324
 			# git pull origin pull/7324/head
+		# record files added/modified in the PR
+		changed_files = git_command('diff --name-only --diff-filter=AM ' +
+									base_branch_name + '...' +
+									pr_branch_name, self.repodir, True)
 		logger.debug(self.repo.git.checkout(self.integration_branch_name))
 		logger.debug(self.repo.git.merge(pr_branch_name))
 		logger.debug(self.repo.git.submodule('update', '--init'))
-#		self.payload['pull_request']['head']['sha'] -> last commit
+		# after this, we have a clean git repo, and the integration branch
+		# contains the situation after the merge
 
-	def check_style(self):
-		# *optional*: perform code style of OF itself to determine initial state
-		# perform code style analysis on PR.
+#		self.payload['pull_request']['head']['sha'] -> last commit
+		return changed_files.split()
+
+	def check_style(self, file_list):
+		"""Check style of the given list of files"""
+		logger.info('Checking style of changed/added files')
 		# Only check files touched by the PR which are also in the desired fileset:
 		# `cpp` and `h` files in official `addons`, `examples`, `devApps`,
 		# `libs/openFrameworks`)
+		file_list = [filename for filename in file_list if
+					filename.lower().endswith(('.cpp', '.h')) and
+					filename.lower().startswith(('examples',
+												'addons',
+												'apps',
+												'libs' + os.path.sep + 'openframeworks'))]
+		logger.debug('Filtered list of files to be style-checked:')
+		for f in file_list:
+			logger.debug(f)
+
+		# *optional*: perform code style of OF itself to determine initial state
+		# perform code style analysis on PR.
+
 		# determine if changes were necessary. If yes, formulate `diff` or
 		# `patch` with the needed corrections.
 		# This could be stored in gists.
-		pass
+		# Clean up list of changed files
 
 	def publish_results(self):
 		#* Report back to PR thread, either via Github Status API or ofbot comments
@@ -216,20 +237,24 @@ class PR_handler(threading.Thread):
 		# TODO: make sure this executes in any case!
 		os.chdir(self.basedir)
 		logger.debug(self.repo.git.checkout('master'))
-#		logger.debug(self.repo.delete_head(D=self.integration_branch_name))
 		git_command('branch -D ' + self.integration_branch_name, self.repodir)
+#		logger.debug(self.repo.delete_head(D=self.integration_branch_name))
 
 
-def git_command(argument_string, repo_dir):
+def git_command(argument_string, repo_dir, return_output=False):
 	"""Execute git command in repo_dir and log output to logger"""
 	try:
 		# the argument string has to be split if Shell==False in check_output
 		output = subprocess.check_output(shlex.split('git ' + argument_string),
 										stderr=subprocess.STDOUT, cwd=repo_dir)
 		logger.debug(output)
+		if return_output:
+			return output
 	except subprocess.CalledProcessError as CPE:
 		logger.error(CPE.cmd + ' failed with exit status ' + CPE.returncode + ':')
 		logger.error(CPE.output)
+		if return_output:
+			return CPE.output
 
 
 class my_endpoint:
