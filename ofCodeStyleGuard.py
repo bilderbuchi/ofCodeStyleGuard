@@ -5,12 +5,18 @@ import json
 import threading
 import sys
 import os
+import git
+import subprocess, shlex
 from github import Github
 from time import sleep
 from styleguard_module import my_config, my_queue
 
 logger = logging.getLogger(' ')
 logging.basicConfig(level=my_config['logging_level'])
+if my_config['logging_level'] == logging.DEBUG:
+	os.environ['GIT_PYTHON_TRACE'] = "full" # '1' or 'full' for including output
+else:
+	os.environ['GIT_PYTHON_TRACE'] = "0"
 urls = (
 	'/', 'my_endpoint'
 )
@@ -23,25 +29,35 @@ class PR_handler(threading.Thread):
 		threading.Thread.__init__(self)
 		self.queue = queue
 		self.basedir = os.getcwd() #base directory
+		self.repodir = os.path.abspath(os.path.join(self.basedir,my_config['repo_local_path']))
 		self.API_Github = self.init_authentication()
 		if self.API_Github == 1:
 			logger.critical('Initialization failed. Aborting.')
 			sys.exit()
+		self.repo = git.Repo(self.repodir)
+		logger.info('Local git repo at ' + str(self.repo.working_dir))
+		logger.info('Checking repo')
+		if self.repo.is_dirty():
+			logger.critical('Local git repo is dirty! Correct this first!')
+			sys.exit()
+		self.integration_branch_name='integration-branch'
 		
 	def run(self):
 		while True:
 			logger.info("Waiting in worker run()")
 #			logging.debug('run self.queue id: ' + str(id(self.queue)))
-			payload = self.queue.get()
-			logger.info("Aquired new payload: PR " + str(payload["number"]))
-			if self.validate_PR(payload):
+			self.payload = self.queue.get()
+			logger.info("Aquired new payload: PR " + str(self.payload["number"]))
+			if self.validate_PR():
 				self.git_process_PR()
 				self.check_style()
 				self.publish_results()
+				sleep(5)
 				self.teardown()
-			sleep(5)
+			else:
+				logger.info('Skipping PR ' + str(self.payload["number"]))
 			self.queue.task_done()
-			logger.info("Finished processing payload PR " + str(payload["number"]))
+			logger.info("Finished processing payload PR " + str(self.payload["number"]))
 			logger.debug("self.queue size: " + str(self.queue.qsize()))
 			
 	def init_authentication(self):
@@ -66,24 +82,24 @@ class PR_handler(threading.Thread):
 			logging.error("Unknown feedback method: " + str(my_config['feedback_method']))
 			return 1
 			
-	def validate_PR(self, payload):
+	def validate_PR(self):
 		logger.info('Verifying information from payload')
-		if payload['repository']['git_url'] == my_config['repo_git_url']:
+		if self.payload['repository']['git_url'] == my_config['repo_git_url']:
 			verified = True
 		else:
 			verified = False
-			logger.warning('PR git_url ' + payload['repository']['git_url'] + ' does not match config: ' + my_config['repo_git_url'])
-		if payload['action'] != 'closed':
+			logger.warning('PR git_url ' + self.payload['repository']['git_url'] + ' does not match config: ' + my_config['repo_git_url'])
+		if self.payload['action'] != 'closed':
 			verified = verified and True
 		else:
 			verified = False
 			logger.warning('PR is closed!')
-		if payload['pull_request']['merged'] == False:
+		if self.payload['pull_request']['merged'] == False:
 			verified = verified and True
 		else:
 			verified = False
 			logger.warning('PR is merged!')
-		if payload['pull_request']['mergeable'] == True:
+		if self.payload['pull_request']['mergeable'] == True:
 			mergeable = True	
 		else:
 			# It's possible that mergeable is incorrectly false.
@@ -91,7 +107,7 @@ class PR_handler(threading.Thread):
 			# check again online, if not, then mergeable = False
 			logger.info("Re-checking if PR is mergeable")
 			sleep(5)
-			if self.API_Github.get_repo(payload['repository']['full_name']).get_pull(payload['pull_request']['number']).mergeable == True:
+			if self.API_Github.get_repo(self.payload['repository']['full_name']).get_pull(self.payload['pull_request']['number']).mergeable == True:
 				mergeable = True
 			else:
 				mergeable = False
@@ -99,25 +115,56 @@ class PR_handler(threading.Thread):
 		verified = verified and mergeable
 		
 		if not verified:
-			logger.warning('PR ' + str(payload["number"]) + ' is not valid.')
+			logger.warning('PR ' + str(self.payload['pull_request']["number"]) + ' is not valid.')
 		else:
-			logger.info('PR ' + str(payload["number"]) + ' is valid.')
+			logger.info('PR ' + str(self.payload['pull_request']["number"]) + ' is valid.')
 		return verified
 	
 	def git_process_PR(self):
 		#* if PR in question is mergeable, pull down and merge.
 		logger.info('Starting git processing of PR')
-		os.chdir(self.basedir)
-		os.chdir(my_config['repo_local_path'])
-		logging.debug('In directory ' + str(os.getcwd()))
-		
-#		payload['pull_request']['head']['repo']['ssh_url']
-#		payload['pull_request']['head']['ref'] -> testbranch
-#		
-#		payload['pull_request']['base']['repo']['ssh_url']
-#		payload['pull_request']['base']['ref'] -> master
-#		
-#		payload['pull_request']['head']['sha'] -> last commit
+		# Identify remotes, and create their objects
+		base_remote = None
+		head_remote = None
+		for rem in self.repo.remotes:
+			logger.debug('Found remote ' + rem.name + ': ' + rem.url)
+			if rem.url == self.payload['pull_request']['base']['repo']['git_url']:
+				base_remote = rem
+				logger.info('Base remote: ' + base_remote.name)
+			if rem.url == self.payload['pull_request']['head']['repo']['git_url']:
+				head_remote = rem
+				logger.info('Head remote: ' + head_remote.name)
+		if base_remote is None:
+			logger.critical('Base remote does not exist yet, with URL ' + self.payload['pull_request']['base']['repo']['git_url'])
+			logger.critical('Please create it first.')
+			sys.exit()
+			
+		# update repo and check out base branch
+		# TODO: this is not yet clean and waterproof!!
+		base_remote.fetch()
+		base_branch_name = self.payload['pull_request']['base']['ref']
+		logger.debug('Base branch name: ' + base_branch_name)
+		logger.debug(self.repo.git.checkout(B=base_branch_name))
+		base_remote.pull()
+		logger.debug(self.repo.git.submodule('update', '--init'))
+
+		# create out temporary branch
+		logger.debug(self.repo.git.branch(self.integration_branch_name))
+
+		# pull down the PR branch
+		pr_number = self.payload['pull_request']['number']
+		pr_branch_name = 'pr-' + str(pr_number)
+		self.repo.git.fetch(self.payload['pull_request']['head']['repo']['git_url'], 'pull/' + str(pr_number) + '/head:' + pr_branch_name)
+		self.repo.git.checkout(pr_branch_name)
+		logger.debug(self.repo.git.submodule('update', '--init'))
+			# from gist:  git fetch <remote> pull/7324/head:pr-7324
+			# maybe:
+			# git checkout -B pr-7324
+			# git pull origin pull/7324/head
+		logger.debug(self.repo.git.checkout(self.integration_branch_name))
+		logger.debug(self.repo.git.merge(pr_branch_name))
+		logger.debug(self.repo.git.submodule('update', '--init'))
+#		self.payload['pull_request']['head']['sha'] -> last commit
 		
 	def check_style(self):
 		#* *optional*: perform code style of OF itself to determine initial state
@@ -147,7 +194,21 @@ class PR_handler(threading.Thread):
 		sys.exit()
 		
 	def teardown(self):
+		# TODO: make sure this executes in any case!
 		os.chdir(self.basedir)
+		logger.debug(self.repo.git.checkout('master'))
+#		logger.debug(self.repo.delete_head(D=self.integration_branch_name))
+		git_command('branch -D ' + self.integration_branch_name, self.repodir)
+
+def git_command(argument_string, repo_dir):
+	"""Execute git command in repo_dir and log output to logger"""
+	try:
+		# the argument string has to be split if Shell==False in check_output
+		output = subprocess.check_output(shlex.split('git ' + argument_string), stderr=subprocess.STDOUT, cwd=repo_dir)
+		logger.debug(output)
+	except subprocess.CalledProcessError as CPE:
+		logger.error(CPE.cmd + ' failed with exit status ' + CPE.returncode + ':')
+		logger.error(CPE.output)
 
 class my_endpoint:
 
