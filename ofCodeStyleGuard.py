@@ -18,23 +18,24 @@ if my_config['logging_level'] == logging.DEBUG:
 	os.environ['GIT_PYTHON_TRACE'] = "full"  # '1' or 'full' for including output
 else:
 	os.environ['GIT_PYTHON_TRACE'] = "0"
-urls = (
-	'/', 'my_endpoint'
+URLS = (
+	'/', 'My_endpoint'
 )
 
 
-class PR_handler(threading.Thread):
+class PrHandler(threading.Thread):
 	"""Threaded PR Worker"""
 
 	def __init__(self, queue):
 		logger.debug("Starting PR worker thread")
 		threading.Thread.__init__(self)
 		self.queue = queue
+		self.payload = None
 		self.basedir = os.getcwd()  # base directory
 		self.repodir = os.path.abspath(os.path.join(self.basedir,
 													my_config['repo_local_path']))
-		self.API_Github = self.init_authentication()
-		if self.API_Github == 1:
+		self.api_github = self.init_authentication()
+		if self.api_github == 1:
 			logger.critical('Initialization failed. Aborting.')
 			sys.exit()
 		self.repo = git.Repo(self.repodir)
@@ -51,8 +52,8 @@ class PR_handler(threading.Thread):
 #			logging.debug('run self.queue id: ' + str(id(self.queue)))
 			self.payload = self.queue.get()
 			logger.info("Aquired new payload: PR " + str(self.payload["number"]))
-			if self.validate_PR():
-				changed_files = self.git_process_PR()
+			if self.validate_pr():
+				changed_files = self.git_process_pr()
 				self.check_style(changed_files)
 				self.publish_results()
 				sleep(5)
@@ -64,17 +65,17 @@ class PR_handler(threading.Thread):
 			logger.debug("self.queue size: " + str(self.queue.qsize()))
 
 	def init_authentication(self):
+		"""Create appropriate Github API user"""
 		logger.info('Creating API-authenticated user')
 		with open(my_config['authfile'], 'r') as authfile:
 			auths_temp = json.load(authfile)
 		if my_config['feedback_method'] == "status":
 			if all(scope in auths_temp['Codestyle_status_access']['scopes']
 					for scope in ['repo:status', 'gist']):
-				# Create authorized PyGithub Github API instance
-				API_Github = Github(auths_temp['Codestyle_status_access']['token'])
+				# Return authorized PyGithub Github API instance
 #					TODO: Verification of authentication
 #					possibly by catching an exception when checking out the base repo
-				return API_Github
+				return Github(auths_temp['Codestyle_status_access']['token'])
 			else:
 				logging.error('Could not authenticate for Status API' +
 							' with auth Codestyle_status_access')
@@ -88,7 +89,8 @@ class PR_handler(threading.Thread):
 							str(my_config['feedback_method']))
 			return 1
 
-	def validate_PR(self):
+	def validate_pr(self):
+		"""Determine if the current PR is valid for processing"""
 		logger.info('Verifying information from payload')
 		if self.payload['repository']['git_url'] == my_config['repo_git_url']:
 			verified = True
@@ -115,7 +117,7 @@ class PR_handler(threading.Thread):
 			# check again online, if not, then mergeable = False
 			logger.info("Re-checking if PR is mergeable")
 			sleep(5)
-			if (self.API_Github.get_repo(self.payload['repository']['full_name'])
+			if (self.api_github.get_repo(self.payload['repository']['full_name'])
 								.get_pull(self.payload['pull_request']['number'])
 								.mergeable == True):
 				mergeable = True
@@ -133,7 +135,10 @@ class PR_handler(threading.Thread):
 						' is valid.')
 		return verified
 
-	def git_process_PR(self):
+	def git_process_pr(self):
+		"""Process the git repo, merge the PR.
+
+		Return the list of files added or modified in the PR"""
 		#* if PR in question is mergeable, pull down and merge.
 		logger.info('Starting git processing of PR')
 		# Identify remotes, and create their objects
@@ -202,8 +207,8 @@ class PR_handler(threading.Thread):
 												'apps',
 												'libs' + os.path.sep + 'openframeworks'))]
 		logger.debug('Filtered list of files to be style-checked:')
-		for f in file_list:
-			logger.debug(f)
+		for tmp_f in file_list:
+			logger.debug(tmp_f)
 
 		# *optional*: perform code style of OF itself to determine initial state
 		# perform code style analysis on PR.
@@ -214,7 +219,7 @@ class PR_handler(threading.Thread):
 		# Clean up list of changed files
 
 	def publish_results(self):
-		#* Report back to PR thread, either via Github Status API or ofbot comments
+		"""Report back to PR, either via Github Status API or ofbot comments"""
 		if my_config['feedback_method'] is "status":
 			self.add_status()
 		elif my_config['feedback_method'] is "comment":
@@ -224,16 +229,19 @@ class PR_handler(threading.Thread):
 							str(my_config['feedback_method']))
 
 	def add_status(self):
+		"""Add the relevant codestyle information via a PR Status"""
 		# commits=user.get_repo('openFrameworks').get_pull(1).get_commits()
 		# c.create_status(state='success',description='somestatus',
 		# target_url='http://sdfsdite.com')
 		pass
 
 	def add_comment(self):
+		"""Add the relevant codestyle information via a comment on the thread"""
 		logging.critical('Feedback via comments not yet implemented. Aborting.')
 		sys.exit()
 
 	def teardown(self):
+		"""Clean up the repo and reset cwd"""
 		# TODO: make sure this executes in any case!
 		os.chdir(self.basedir)
 		logger.debug(self.repo.git.checkout('master'))
@@ -250,14 +258,15 @@ def git_command(argument_string, repo_dir, return_output=False):
 		logger.debug(output)
 		if return_output:
 			return output
-	except subprocess.CalledProcessError as CPE:
-		logger.error(CPE.cmd + ' failed with exit status ' + CPE.returncode + ':')
-		logger.error(CPE.output)
+	except subprocess.CalledProcessError as exc:
+		logger.error(exc.cmd + ' failed with exit status ' +
+					exc.returncode + ':')
+		logger.error(exc.output)
 		if return_output:
-			return CPE.output
+			return exc.output
 
 
-class my_endpoint:
+class My_endpoint:
 
 	def POST(self):
 		logger.info("Received POST request.")
@@ -293,11 +302,11 @@ class my_endpoint:
 def main():
 	if len(sys.argv) == 1:
 		sys.argv.append(str(my_config['local_port']))
-	threaded_pr_worker = PR_handler(my_queue)
+	threaded_pr_worker = PrHandler(my_queue)
 	threaded_pr_worker.daemon = True
 	threaded_pr_worker.start()
 #	logging.debug('outer my_queue id: ' + str(id(my_queue)))
-	app = web.application(urls, globals())
+	app = web.application(URLS, globals())
 	app.run()
 	my_queue.join()
 
