@@ -59,7 +59,7 @@ class PrHandler(threading.Thread):
 				changed_files = self.git_process_pr()
 				self.check_style(changed_files)
 				self.publish_results()
-				sleep(5)
+#				sleep(5)
 				self.teardown()
 			else:
 				logger.info('Skipping PR ' + str(self.payload["number"]))
@@ -190,6 +190,7 @@ class PrHandler(threading.Thread):
 									pr_branch_name, self.repodir, True)
 		logger.debug(self.repo.git.checkout(self.integration_branch_name))
 		logger.debug(self.repo.git.merge(pr_branch_name))
+		logger.debug(self.repo.git.checkout(pr_branch_name))
 		logger.debug(self.repo.git.submodule('update', '--init'))
 		# after this, we have a clean git repo, and the integration branch
 		# contains the situation after the merge
@@ -219,16 +220,34 @@ class PrHandler(threading.Thread):
 		logger.info('Finished styling')
 		# check if styling changed any files
 		if git_command('status --porcelain', self.repodir, True, False):
-			patch_file_name = 'pr-' + str(self.payload['pull_request']['number']) + '.patch'
+			patch_file_name = ('pr-' +
+								str(self.payload['pull_request']['number']) +
+								'.patch')
+			logger.info('Creating patch file ' + patch_file_name)
 			with open(patch_file_name, 'w') as patchfile:
 				# OK to use git diff since only text files will be modified
-				patchfile.write(git_command('diff', self.repodir, True, False))
+				patchfile.write(git_command('diff HEAD', self.repodir, True, False))
+			# test if patch applies cleanly
+			git_command('reset --hard HEAD', self.repodir)
+			if git_command('apply --index --check ' +
+						os.path.join(self.basedir, patch_file_name),
+						self.repodir, True):
+				logging.critical('Patch' + patch_file_name +
+								' does not apply cleanly, aborting!')
+				sys.exit()
+			else:
+				logging.info('Patch' + patch_file_name + ' applies cleanly')
+		else:
+			logging.info("PR already conforms to style")
+
 		# now, reset HEAD so that the repo is clean again
 		git_command('reset --hard HEAD', self.repodir)
-
+		logger.debug(self.repo.git.submodule('update', '--init'))
 		# *optional*: perform code style of OF itself to determine initial state
 		# This could be stored in gists.
 		# Clean up list of changed files
+		# TODO: clean up some weird merge into master at the end
+
 
 	def publish_results(self):
 		"""Report back to PR, either via Github Status API or ofbot comments"""
@@ -273,8 +292,8 @@ def git_command(arg_string, repo_dir, return_output=False, log_output=True):
 			return output
 	except subprocess.CalledProcessError as exc:
 		if log_output:
-			logger.error(exc.cmd + ' failed with exit status ' +
-						exc.returncode + ':')
+			logger.error(str(exc.cmd) + ' failed with exit status ' +
+						str(exc.returncode) + ':')
 			logger.error(exc.output)
 		if return_output:
 			return exc.output
