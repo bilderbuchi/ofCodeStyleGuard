@@ -12,6 +12,12 @@ from github import Github
 from time import sleep
 from styleguard_module import my_config, my_queue
 
+# TODO: Make ofbot do all the work on GH
+# TODO: check git processing logic
+# TODO: refactor out git-python
+# TODO: Implement manual triggering of PR checks
+# TODO: Implement proper abort/bail system
+
 logger = logging.getLogger(' ')
 logging.basicConfig(level=my_config['logging_level'])
 if my_config['logging_level'] == logging.DEBUG:
@@ -52,15 +58,14 @@ class PrHandler(threading.Thread):
 	def run(self):
 		while True:
 			logger.info("Waiting in worker run()")
-#			logging.debug('run self.queue id: ' + str(id(self.queue)))
+#			logger.debug('run self.queue id: ' + str(id(self.queue)))
 			self.payload = self.queue.get()
 			logger.info("Aquired new payload: PR " + str(self.payload["number"]))
 			if self.validate_pr():
 				changed_files = self.git_process_pr()
 				self.check_style(changed_files)
 				self.publish_results()
-#				sleep(5)
-				self.teardown()
+				self.clean_up()
 			else:
 				logger.info('Skipping PR ' + str(self.payload["number"]))
 			self.queue.task_done()
@@ -73,22 +78,22 @@ class PrHandler(threading.Thread):
 		with open(my_config['authfile'], 'r') as authfile:
 			auths_temp = json.load(authfile)
 		if my_config['feedback_method'] == "status":
-			if all(scope in auths_temp['Codestyle_status_access']['scopes']
+			if all(scope in auths_temp['ofbot_codestyle_status']['scopes']
 					for scope in ['repo:status', 'gist']):
 				# Return authorized PyGithub Github API instance
 #					TODO: Verification of authentication
 #					possibly by catching an exception when checking out the base repo
 				return Github(auths_temp['Codestyle_status_access']['token'])
 			else:
-				logging.error('Could not authenticate for Status API' +
+				logger.error('Could not authenticate for Status API' +
 							' with auth Codestyle_status_access')
 				return 1
 		elif my_config['feedback_method'] == "comment":
-			logging.critical('Comment authorization not yet implemented!')
+			logger.critical('Comment authorization not yet implemented!')
 #			TODO: implement this
 			return 1
 		else:
-			logging.error("Unknown feedback method: " +
+			logger.error("Unknown feedback method: " +
 							str(my_config['feedback_method']))
 			return 1
 
@@ -96,6 +101,7 @@ class PrHandler(threading.Thread):
 		"""Determine if the current PR is valid for processing"""
 		logger.info('Verifying information from payload')
 		if self.payload['repository']['git_url'] == my_config['repo_git_url']:
+		# TODO: be more robust about git/ssh URLs
 			verified = True
 		else:
 			verified = False
@@ -139,10 +145,9 @@ class PrHandler(threading.Thread):
 		return verified
 
 	def git_process_pr(self):
-		"""Process the git repo, merge the PR.
+		"""Process the git repo, merge the PR if mergeable.
 
 		Return the list of files added or modified in the PR"""
-		#* if PR in question is mergeable, pull down and merge.
 		logger.info('Starting git processing of PR')
 		# Identify remotes, and create their objects
 		base_remote = None
@@ -158,7 +163,7 @@ class PrHandler(threading.Thread):
 		if base_remote is None:
 			logger.critical('Base remote does not exist yet, with URL ' +
 							self.payload['pull_request']['base']['repo']['git_url'])
-			logger.critical('Please create it first.')
+			logger.critical('Please create it first in the local git repo.')
 			sys.exit()
 
 		# update repo and check out base branch
@@ -170,7 +175,7 @@ class PrHandler(threading.Thread):
 		base_remote.pull()
 		logger.debug(self.repo.git.submodule('update', '--init'))
 
-		# create out temporary branch
+		# create temporary branch
 		logger.debug(self.repo.git.branch(self.integration_branch_name))
 
 		# pull down the PR branch
@@ -217,7 +222,7 @@ class PrHandler(threading.Thread):
 		for tmp_file in file_list:
 			style_file(os.path.abspath(os.path.join(self.repodir, tmp_file)),
 						self.stylerdir)
-		logger.info('Finished styling')
+		logger.info('Finished styling. Checking if there were changes.')
 		# check if styling changed any files
 		if git_command('status --porcelain', self.repodir, True, False):
 			patch_file_name = ('pr-' +
@@ -232,17 +237,20 @@ class PrHandler(threading.Thread):
 			if git_command('apply --index --check ' +
 						os.path.join(self.basedir, patch_file_name),
 						self.repodir, True):
-				logging.critical('Patch' + patch_file_name +
+				logger.critical('Patch' + patch_file_name +
 								' does not apply cleanly, aborting!')
 				sys.exit()
 			else:
-				logging.info('Patch' + patch_file_name + ' applies cleanly')
+				logger.info('Patch' + patch_file_name + ' applies cleanly')
 		else:
-			logging.info("PR already conforms to style")
+			logger.info("PR already conforms to style")
 
 		# now, reset HEAD so that the repo is clean again
 		git_command('reset --hard HEAD', self.repodir)
 		logger.debug(self.repo.git.submodule('update', '--init'))
+		# TODO: check if the merge itself still works:
+		# git format-patch master --stdout | git-apply --check
+
 		# *optional*: perform code style of OF itself to determine initial state
 		# This could be stored in gists.
 		# Clean up list of changed files
@@ -256,7 +264,7 @@ class PrHandler(threading.Thread):
 		elif my_config['feedback_method'] is "comment":
 			self.add_comment()
 		else:
-			logging.error("Unknown feedback method: " +
+			logger.error("Unknown feedback method: " +
 							str(my_config['feedback_method']))
 
 	def add_status(self):
@@ -268,16 +276,15 @@ class PrHandler(threading.Thread):
 
 	def add_comment(self):
 		"""Add the relevant codestyle information via a comment on the thread"""
-		logging.critical('Feedback via comments not yet implemented. Aborting.')
+		logger.critical('Feedback via comments not yet implemented. Aborting.')
 		sys.exit()
 
-	def teardown(self):
+	def clean_up(self):
 		"""Clean up the repo and reset cwd"""
 		# TODO: make sure this executes in any case!
-		os.chdir(self.basedir)
+		# os.chdir(self.basedir)
 		logger.debug(self.repo.git.checkout('master'))
 		git_command('branch -D ' + self.integration_branch_name, self.repodir)
-#		logger.debug(self.repo.delete_head(D=self.integration_branch_name))
 
 
 def git_command(arg_string, repo_dir, return_output=False, log_output=True):
@@ -303,10 +310,11 @@ def style_file(my_file, style_tool_dir):
 	""" Call style tool on file and log output to logger"""
 	try:
 		# the argument string has to be split if Shell==False in check_output
-		output = subprocess.check_output(shlex.split('.' + os.path.sep + 'ofStyler ' + my_file),
+		output = subprocess.check_output(shlex.split('.' + os.path.sep +
+													'ofStyler ' + my_file),
 										stderr=subprocess.STDOUT, cwd=style_tool_dir)
 		if output:
-			logger.debug(output)
+			logger.debug(output.rstrip('\n'))
 	except subprocess.CalledProcessError as exc:
 		logger.error(exc.cmd + ' failed with exit status ' +
 					exc.returncode + ':')
@@ -331,7 +339,7 @@ class My_endpoint:
 					payload = json.load(sample)
 			else:
 				raise
-#		logging.debug('POST my_queue id: ' + str(id(my_queue)))
+#		logger.debug('POST my_queue id: ' + str(id(my_queue)))
 		self.handle_payload(payload, my_queue)
 		return
 
@@ -352,7 +360,7 @@ def main():
 	threaded_pr_worker = PrHandler(my_queue)
 	threaded_pr_worker.daemon = True
 	threaded_pr_worker.start()
-#	logging.debug('outer my_queue id: ' + str(id(my_queue)))
+#	logger.debug('outer my_queue id: ' + str(id(my_queue)))
 	app = web.application(URLS, globals())
 	app.run()
 	my_queue.join()
