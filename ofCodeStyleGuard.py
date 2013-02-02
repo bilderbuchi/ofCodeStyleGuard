@@ -14,6 +14,7 @@ from styleguard_module import my_config, my_queue
 
 # TODO: Make ofbot do all the work on GH
 # TODO: check git processing logic
+# TODO: make git_command class method
 # TODO: refactor out git-python
 # TODO: Implement manual triggering of PR checks
 # TODO: Implement proper abort/bail system
@@ -125,6 +126,7 @@ class PrHandler(threading.Thread):
 			# check again online, if not, then mergeable = False
 			logger.info("Re-checking if PR is mergeable")
 			sleep(5)
+			# TODO: this prints an unwanted message to console
 			if (self.api_github.get_repo(self.payload['repository']['full_name'])
 								.get_pull(self.payload['pull_request']['number'])
 								.mergeable == True):
@@ -151,6 +153,7 @@ class PrHandler(threading.Thread):
 		# Identify remotes, and create their objects
 		base_remote = None
 		head_remote = None
+		# TODO: nicer handling of remotes, both git and ssh urls
 		for rem in self.repo.remotes:
 			logger.debug('Found remote ' + rem.name + ': ' + rem.url)
 			if rem.url == self.payload['pull_request']['base']['repo']['git_url']:
@@ -166,7 +169,6 @@ class PrHandler(threading.Thread):
 			sys.exit()
 
 		# update repo and check out base branch
-		# TODO: this is not yet clean and waterproof!!
 		base_remote.fetch()
 		base_branch_name = self.payload['pull_request']['base']['ref']
 		logger.debug('Base branch name: ' + base_branch_name)
@@ -181,11 +183,9 @@ class PrHandler(threading.Thread):
 			# branch does not exist locally yet, get it
 			git_command('checkout -b ' + base_branch_name + ' ' +
 					base_remote.name + '/' + base_branch_name)
-#		logger.debug(self.repo.git.checkout(B=base_branch_name))
-#		base_remote.pull()
 		logger.debug(self.repo.git.submodule('update', '--init'))
 
-		# pull down the PR branch
+		logger.info('Getting the PR branch')
 		pr_number = self.payload['pull_request']['number']
 		pr_branch_name = 'pr-' + str(pr_number)
 		self.repo.git.fetch(self.payload['pull_request']['head']['repo']['git_url'],
@@ -193,10 +193,10 @@ class PrHandler(threading.Thread):
 		self.repo.git.checkout(pr_branch_name)
 		logger.debug(self.repo.git.submodule('update', '--init'))
 
-		# record files added/modified in the PR
+		logger.ingo('Determine files added/modified in the PR')
 		changed_files = git_command('diff --name-only --diff-filter=AM ' +
 									base_branch_name + '...' +
-									pr_branch_name, self.repodir, True)
+									pr_branch_name, self.repodir, True, False)
 
 		logger.debug(self.repo.git.checkout(pr_branch_name))
 		logger.debug(self.repo.git.submodule('update', '--init'))
@@ -215,9 +215,9 @@ class PrHandler(threading.Thread):
 												'addons',
 												'apps',
 												'libs' + os.path.sep + 'openframeworks'))]
-		logger.debug('Filtered list of files to be style-checked:')
-		for tmp_f in file_list:
-			logger.debug(tmp_f)
+#		logger.debug('Filtered list of files to be style-checked:')
+#		for tmp_f in file_list:
+#			logger.debug(tmp_f)
 		logger.info('Styling files')
 		for tmp_file in file_list:
 			style_file(os.path.abspath(os.path.join(self.repodir, tmp_file)),
@@ -246,6 +246,7 @@ class PrHandler(threading.Thread):
 			logger.info("PR already conforms to style")
 
 		# now, reset HEAD so that the repo is clean again
+		logging.debug('Resetting HEAD to get a clean repo')
 		git_command('reset --hard HEAD', self.repodir)
 		logger.debug(self.repo.git.submodule('update', '--init'))
 		# TODO: check if the merge itself still works:
@@ -339,18 +340,18 @@ class My_endpoint:
 			else:
 				raise
 #		logger.debug('POST my_queue id: ' + str(id(my_queue)))
+		sleep(0.5) # to make sure the webserver has flushed  all log messages
 		self.handle_payload(payload, my_queue)
 		return
 
 	def handle_payload(self, payload, queue):
 		"""	Queue new PRs coming in during processing"""
-		logger.debug('PR nr ' + str(payload['number']) + ': ' +
+		logger.info('Received PR ' + str(payload['number']) + ': ' +
 					payload['pull_request']['title'])
 		with open('last_payload.json', 'w') as outfile:
 			json.dump(payload, outfile, indent=2)
 		logger.debug("handing payload off to queue")
 		queue.put(payload)
-		logger.debug("queue size: " + str(queue.qsize()))
 
 
 def main():
