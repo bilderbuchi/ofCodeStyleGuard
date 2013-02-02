@@ -8,7 +8,7 @@ import os
 import git
 import subprocess
 import shlex
-from github import Github
+from github import Github, InputFileContent
 from time import sleep
 from styleguard_module import my_config, my_queue
 
@@ -63,8 +63,8 @@ class PrHandler(threading.Thread):
 			logger.info("Aquired new payload: PR " + str(self.payload["number"]))
 			if self.validate_pr():
 				changed_files = self.git_process_pr()
-				self.check_style(changed_files)
-				self.publish_results()
+				result = self.check_style(changed_files)
+				self.publish_results(result)
 				self.clean_up()
 			else:
 				logger.info('Skipping PR ' + str(self.payload["number"]))
@@ -83,10 +83,10 @@ class PrHandler(threading.Thread):
 				# Return authorized PyGithub Github API instance
 #					TODO: Verification of authentication
 #					possibly by catching an exception when checking out the base repo
-				return Github(auths_temp['Codestyle_status_access']['token'])
+				return Github(auths_temp['ofbot_codestyle_status']['token'])
 			else:
 				logger.error('Could not authenticate for Status API' +
-							' with auth Codestyle_status_access')
+							' with auth ofbot_codestyle_status')
 				return 1
 		elif my_config['feedback_method'] == "comment":
 			logger.critical('Comment authorization not yet implemented!')
@@ -121,6 +121,7 @@ class PrHandler(threading.Thread):
 		if self.payload['pull_request']['mergeable'] == True:
 			mergeable = True
 		else:
+			# TODO: do this in every case!
 			# It's possible that mergeable is incorrectly false.
 			# Maybe due to the check being asynchronous
 			# check again online, if not, then mergeable = False
@@ -150,6 +151,9 @@ class PrHandler(threading.Thread):
 
 		Return the list of files added or modified in the PR"""
 		logger.info('Starting git processing of PR')
+		logger.debug(self.repo.git.checkout('master'))
+		git_command('submodule update --init', self.repodir)
+		
 		# Identify remotes, and create their objects
 		base_remote = None
 		head_remote = None
@@ -186,6 +190,7 @@ class PrHandler(threading.Thread):
 		logger.debug(self.repo.git.submodule('update', '--init'))
 
 		logger.info('Getting the PR branch')
+		# TODO: log current head commit here
 		pr_number = self.payload['pull_request']['number']
 		pr_branch_name = 'pr-' + str(pr_number)
 		self.repo.git.fetch(self.payload['pull_request']['head']['repo']['git_url'],
@@ -193,7 +198,7 @@ class PrHandler(threading.Thread):
 		self.repo.git.checkout(pr_branch_name)
 		logger.debug(self.repo.git.submodule('update', '--init'))
 
-		logger.ingo('Determine files added/modified in the PR')
+		logger.info('Determine files added/modified in the PR')
 		changed_files = git_command('diff --name-only --diff-filter=AM ' +
 									base_branch_name + '...' +
 									pr_branch_name, self.repodir, True, False)
@@ -223,26 +228,27 @@ class PrHandler(threading.Thread):
 			style_file(os.path.abspath(os.path.join(self.repodir, tmp_file)),
 						self.stylerdir)
 		logger.info('Finished styling. Checking if there were changes.')
+		pr_number = self.payload['pull_request']['number']
+		pr_url = self.payload['pull_request']['html_url']
 		# check if styling changed any files
 		if git_command('status --porcelain', self.repodir, True, False):
-			patch_file_name = ('pr-' +
-								str(self.payload['pull_request']['number']) +
-								'.patch')
+			patch_file_name = ('pr-' + str(pr_number) + '.patch')
 			logger.info('Creating patch file ' + patch_file_name)
-			with open(patch_file_name, 'w') as patchfile:
+			with open(os.path.join('patches', patch_file_name), 'w') as patchfile:
 				# OK to use git diff since only text files will be modified
 				patchfile.write(git_command('diff HEAD', self.repodir, True, False))
 			# test if patch applies cleanly
 			git_command('reset --hard HEAD', self.repodir)
 			if git_command('apply --index --check ' +
-						os.path.join(self.basedir, patch_file_name),
+						os.path.join(self.basedir, 'patches', patch_file_name),
 						self.repodir, True):
 				logger.critical('Patch' + patch_file_name +
 								' does not apply cleanly, aborting!')
 				sys.exit()
 			else:
-				logger.info('Patch' + patch_file_name + ' applies cleanly')
+				logger.info('Patch ' + patch_file_name + ' applies cleanly')
 		else:
+			patch_file_name = ''
 			logger.info("PR already conforms to style")
 
 		# now, reset HEAD so that the repo is clean again
@@ -255,29 +261,64 @@ class PrHandler(threading.Thread):
 		# *optional*: perform code style of OF itself to determine initial state
 		# This could be stored in gists.
 		# Clean up list of changed files
+		return {'pr_number': pr_number,
+				'pr_url': pr_url,
+				'patch_file_name': patch_file_name}
 
-	def publish_results(self):
+	def publish_results(self, result):
 		"""Report back to PR, either via Github Status API or ofbot comments"""
-		#		self.payload['pull_request']['head']['sha'] -> last commit
 		if my_config['feedback_method'] is "status":
-			self.add_status()
+			self.add_status(result)
 		elif my_config['feedback_method'] is "comment":
-			self.add_comment()
+			self.add_comment(result)
 		else:
 			logger.error("Unknown feedback method: " +
 							str(my_config['feedback_method']))
 
-	def add_status(self):
+	def add_status(self, result):
 		"""Add the relevant codestyle information via a PR Status"""
+		logger.info('Adding Status info to PR')
+		repo = self.api_github.get_user('bilderbuchi').get_repo('openFrameworks')
+		commit = repo.get_commit(self.payload['pull_request']['head']['sha'])
+		# State: success, failure, error, or pending
+		if result['patch_file_name']:
+			# There's a patch file
+			my_gist = self.create_gist(result)
+			commit.create_status(state='failure',
+								target_url=my_gist.html_url,
+								description='PR does not conform to style. Click for details.')
+		else:
+			# no patch necessary-> green status
+			commit.create_status(state='success',
+								description='PR conforms to code style.')
+		# self.payload['pull_request']['head']['sha'] -> last commit
 		# commits=user.get_repo('openFrameworks').get_pull(1).get_commits()
 		# c.create_status(state='success',description='somestatus',
 		# target_url='http://sdfsdite.com')
-		pass
 
-	def add_comment(self):
+	def add_comment(self, result):
 		"""Add the relevant codestyle information via a comment on the thread"""
 		logger.critical('Feedback via comments not yet implemented. Aborting.')
 		sys.exit()
+
+	def create_gist(self, result):
+		"""Create gist with usage instructions and patch file.
+
+		Return Gist object for further consumption"""
+		logger.info('Creating gist')
+		with open('gist_description.md', 'r') as descfile:
+			desc_string = descfile.read().format(result['pr_number'], result['pr_url'])
+			with open(os.path.join('patches', result['patch_file_name']), 'r') as patchfile:
+				patch_file_name = 'pr-' + str(result['pr_number']) + '.patch'
+				desc_file_name = ('OF_PR' + str(result['pr_number']) + '-' +
+					self.payload['pull_request']['head']['sha'][1:7] +
+					'.md')
+				my_gist = self.api_github.get_user().create_gist(True,
+					{desc_file_name: InputFileContent(desc_string),
+					patch_file_name: InputFileContent(patchfile.read())},
+					'OF Code style patch for PR ' + str(result['pr_number']))
+		logger.info('Created Gist ' + my_gist.html_url)
+		return my_gist
 
 	def clean_up(self):
 		"""Clean up the repo and reset cwd"""
@@ -340,7 +381,7 @@ class My_endpoint:
 			else:
 				raise
 #		logger.debug('POST my_queue id: ' + str(id(my_queue)))
-		sleep(0.5) # to make sure the webserver has flushed  all log messages
+		sleep(0.5)  # to make sure the webserver has flushed  all log messages
 		self.handle_payload(payload, my_queue)
 		return
 
