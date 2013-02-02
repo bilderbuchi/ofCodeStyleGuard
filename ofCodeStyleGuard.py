@@ -53,7 +53,6 @@ class PrHandler(threading.Thread):
 		if self.repo.is_dirty():
 			logger.critical('Local git repo is dirty! Correct this first!')
 			sys.exit()
-		self.integration_branch_name = 'integration-branch'
 
 	def run(self):
 		while True:
@@ -171,12 +170,20 @@ class PrHandler(threading.Thread):
 		base_remote.fetch()
 		base_branch_name = self.payload['pull_request']['base']['ref']
 		logger.debug('Base branch name: ' + base_branch_name)
-		logger.debug(self.repo.git.checkout(B=base_branch_name))
-		base_remote.pull()
-		logger.debug(self.repo.git.submodule('update', '--init'))
 
-		# create temporary branch
-		logger.debug(self.repo.git.branch(self.integration_branch_name))
+		if not git_command('show-ref --verify --heads --quiet -- refs/heads/' +
+				base_branch_name, self.repodir):
+			# branch already exists, check it out
+			git_command('checkout ' + base_branch_name, self.repodir)
+			git_command('merge ' + base_remote.name + '/' +
+					base_branch_name, self.repodir)
+		else:
+			# branch does not exist locally yet, get it
+			git_command('checkout -b ' + base_branch_name + ' ' +
+					base_remote.name + '/' + base_branch_name)
+#		logger.debug(self.repo.git.checkout(B=base_branch_name))
+#		base_remote.pull()
+		logger.debug(self.repo.git.submodule('update', '--init'))
 
 		# pull down the PR branch
 		pr_number = self.payload['pull_request']['number']
@@ -185,22 +192,15 @@ class PrHandler(threading.Thread):
 							'pull/' + str(pr_number) + '/head:' + pr_branch_name)
 		self.repo.git.checkout(pr_branch_name)
 		logger.debug(self.repo.git.submodule('update', '--init'))
-			# from gist:  git fetch <remote> pull/7324/head:pr-7324
-			# maybe:
-			# git checkout -B pr-7324
-			# git pull origin pull/7324/head
+
 		# record files added/modified in the PR
 		changed_files = git_command('diff --name-only --diff-filter=AM ' +
 									base_branch_name + '...' +
 									pr_branch_name, self.repodir, True)
-		logger.debug(self.repo.git.checkout(self.integration_branch_name))
-		logger.debug(self.repo.git.merge(pr_branch_name))
+
 		logger.debug(self.repo.git.checkout(pr_branch_name))
 		logger.debug(self.repo.git.submodule('update', '--init'))
-		# after this, we have a clean git repo, and the integration branch
-		# contains the situation after the merge
-
-#		self.payload['pull_request']['head']['sha'] -> last commit
+		# after this, we have a clean git repo with the PR branch checked out
 		return changed_files.split()
 
 	def check_style(self, file_list):
@@ -254,11 +254,10 @@ class PrHandler(threading.Thread):
 		# *optional*: perform code style of OF itself to determine initial state
 		# This could be stored in gists.
 		# Clean up list of changed files
-		# TODO: clean up some weird merge into master at the end
-
 
 	def publish_results(self):
 		"""Report back to PR, either via Github Status API or ofbot comments"""
+		#		self.payload['pull_request']['head']['sha'] -> last commit
 		if my_config['feedback_method'] is "status":
 			self.add_status()
 		elif my_config['feedback_method'] is "comment":
@@ -284,7 +283,7 @@ class PrHandler(threading.Thread):
 		# TODO: make sure this executes in any case!
 		# os.chdir(self.basedir)
 		logger.debug(self.repo.git.checkout('master'))
-		git_command('branch -D ' + self.integration_branch_name, self.repodir)
+		git_command('submodule update --init', self.repodir)
 
 
 def git_command(arg_string, repo_dir, return_output=False, log_output=True):
