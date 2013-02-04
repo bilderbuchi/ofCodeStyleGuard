@@ -72,7 +72,8 @@ class PrHandler(threading.Thread):
 			logger.info("Finished processing payload PR " + str(self.payload["number"]))
 			logger.debug("self.queue size: " + str(self.queue.qsize()))
 
-	def init_authentication(self):
+	@staticmethod
+	def init_authentication():
 		"""Create appropriate Github API user"""
 		logger.info('Creating API-authenticated user')
 		with open(my_config['authfile'], 'r') as authfile:
@@ -81,16 +82,16 @@ class PrHandler(threading.Thread):
 			if all(scope in auths_temp['ofbot_codestyle_status']['scopes']
 					for scope in ['repo:status', 'gist']):
 				# Return authorized PyGithub Github API instance
-				g = github.Github(auths_temp['ofbot_codestyle_status']['token'])
+				gh_instance = github.Github(auths_temp['ofbot_codestyle_status']['token'])
 				# Verification of authentication
 				try:
-					unused_var = g.get_user().name
+					unused_var = gh_instance.get_user().name
 				except github.GithubException as exception:
 					# will throw 401 {u'message': u'Bad credentials'}
 					logger.critical('Authentication invalid: ' +
 								str(exception.status) + " " + str(exception.data))
 					return 1
-				return g
+				return gh_instance
 			else:
 				logger.error('Could not authenticate for Status API' +
 							' with auth ofbot_codestyle_status')
@@ -155,7 +156,7 @@ class PrHandler(threading.Thread):
 
 		Return the list of files added or modified in the PR"""
 		logger.info('Starting git processing of PR')
-		logger.debug(self.repo.git.checkout('master'))
+		self.repo.git.checkout('master')
 		git_command('submodule update --init', self.repodir)
 
 		# Identify remotes, and create their objects
@@ -192,22 +193,27 @@ class PrHandler(threading.Thread):
 			git_command('checkout -b ' + base_branch_name + ' ' +
 					base_remote.name + '/' + base_branch_name, self.repodir)
 		logger.debug(self.repo.git.submodule('update', '--init'))
+		logger.info('Base branch at: ' +
+					git_command('log --pretty=format:"%h - %s" -n 1 HEAD',
+								self.repodir, True, False))
 
 		logger.info('Getting the PR branch')
-		# TODO: log current head commit here
 		pr_number = self.payload['pull_request']['number']
 		pr_branch_name = 'pr-' + str(pr_number)
 		self.repo.git.fetch(self.payload['pull_request']['head']['repo']['git_url'],
 							'pull/' + str(pr_number) + '/head:' + pr_branch_name)
 		self.repo.git.checkout(pr_branch_name)
 		logger.debug(self.repo.git.submodule('update', '--init'))
+		logger.info('PR branch at: ' +
+			git_command('log --pretty=format:"%h - %s" -n 1 HEAD',
+						self.repodir, True, False))
 
 		logger.info('Determine files added/modified in the PR')
-		changed_files = git_command('diff --name-only --diff-filter=AM ' +
+		changed_files = str(git_command('diff --name-only --diff-filter=AM ' +
 									base_branch_name + '...' +
-									pr_branch_name, self.repodir, True, False)
+									pr_branch_name, self.repodir, True, False))
 
-		logger.debug(self.repo.git.checkout(pr_branch_name))
+		self.repo.git.checkout(pr_branch_name)
 		logger.debug(self.repo.git.submodule('update', '--init'))
 		# after this, we have a clean git repo with the PR branch checked out
 		return changed_files.split()
@@ -256,7 +262,7 @@ class PrHandler(threading.Thread):
 			logger.info("PR already conforms to style")
 
 		# now, reset HEAD so that the repo is clean again
-		logging.debug('Resetting HEAD to get a clean repo')
+		logger.debug('Resetting HEAD to get a clean repo')
 		git_command('reset --hard HEAD', self.repodir)
 		logger.debug(self.repo.git.submodule('update', '--init'))
 		# TODO: check if the merge itself still works:
@@ -302,6 +308,7 @@ class PrHandler(threading.Thread):
 
 	def add_comment(self, result):
 		"""Add the relevant codestyle information via a comment on the thread"""
+		# TODO: Implement this
 		logger.critical('Feedback via comments not yet implemented. Aborting.')
 		sys.exit()
 
@@ -312,7 +319,8 @@ class PrHandler(threading.Thread):
 		logger.info('Creating gist')
 		with open('gist_description.md', 'r') as descfile:
 			desc_string = descfile.read().format(result['pr_number'], result['pr_url'])
-			with open(os.path.join('patches', result['patch_file_name']), 'r') as patchfile:
+			with open(os.path.join('patches', result['patch_file_name']),
+					'r') as patchfile:
 				patch_file_name = 'pr-' + str(result['pr_number']) + '.patch'
 				desc_file_name = ('OF_PR' + str(result['pr_number']) + '-' +
 					self.payload['pull_request']['head']['sha'][1:7] +
@@ -339,9 +347,9 @@ def git_command(arg_string, repo_dir, return_output=False, log_output=True):
 		output = subprocess.check_output(shlex.split('git ' + arg_string),
 										stderr=subprocess.STDOUT, cwd=repo_dir)
 		if output and log_output:
-			logger.debug(output)
+			logger.debug(str(output).rstrip('\n'))
 		if return_output:
-			return output
+			return str(output).rstrip('\n')
 	except subprocess.CalledProcessError as exc:
 		if log_output:
 			logger.error(str(exc.cmd) + ' failed with exit status ' +
@@ -359,7 +367,7 @@ def style_file(my_file, style_tool_dir):
 													'ofStyler ' + my_file),
 										stderr=subprocess.STDOUT, cwd=style_tool_dir)
 		if output:
-			logger.debug(output.rstrip('\n'))
+			logger.debug(str(output).rstrip('\n'))
 	except subprocess.CalledProcessError as exc:
 		logger.error(exc.cmd + ' failed with exit status ' +
 					exc.returncode + ':')
