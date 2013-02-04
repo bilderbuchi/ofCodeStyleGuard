@@ -8,16 +8,15 @@ import os
 import git
 import subprocess
 import shlex
-from github import Github, InputFileContent
+import github
 from time import sleep
 from styleguard_module import my_config, my_queue
 
-# TODO: Make ofbot do all the work on GH
-# TODO: check git processing logic
 # TODO: make git_command class method
 # TODO: refactor out git-python
 # TODO: Implement manual triggering of PR checks
 # TODO: Implement proper abort/bail system
+# TODO: web.py -> flask/Werkzeug
 
 logger = logging.getLogger(' ')
 logging.basicConfig(level=my_config['logging_level'])
@@ -61,6 +60,7 @@ class PrHandler(threading.Thread):
 #			logger.debug('run self.queue id: ' + str(id(self.queue)))
 			self.payload = self.queue.get()
 			logger.info("Aquired new payload: PR " + str(self.payload["number"]))
+			# TODO: guaranteeing clean_up could be done with exceptions!
 			if self.validate_pr():
 				changed_files = self.git_process_pr()
 				result = self.check_style(changed_files)
@@ -81,16 +81,23 @@ class PrHandler(threading.Thread):
 			if all(scope in auths_temp['ofbot_codestyle_status']['scopes']
 					for scope in ['repo:status', 'gist']):
 				# Return authorized PyGithub Github API instance
-#					TODO: Verification of authentication
-#					possibly by catching an exception when checking out the base repo
-				return Github(auths_temp['ofbot_codestyle_status']['token'])
+				g = github.Github(auths_temp['ofbot_codestyle_status']['token'])
+				# Verification of authentication
+				try:
+					unused_var = g.get_user().name
+				except github.GithubException as exception:
+					# will throw 401 {u'message': u'Bad credentials'}
+					logger.critical('Authentication invalid: ' +
+								str(exception.status) + " " + str(exception.data))
+					return 1
+				return g
 			else:
 				logger.error('Could not authenticate for Status API' +
 							' with auth ofbot_codestyle_status')
 				return 1
 		elif my_config['feedback_method'] == "comment":
 			logger.critical('Comment authorization not yet implemented!')
-#			TODO: implement this
+#			TODO: implement comment-style PR feedback
 			return 1
 		else:
 			logger.error("Unknown feedback method: " +
@@ -118,23 +125,20 @@ class PrHandler(threading.Thread):
 		else:
 			verified = False
 			logger.warning('PR is merged!')
-		if self.payload['pull_request']['mergeable'] == True:
+
+		# Mergeability checking is asynchronous on Github, so this has to be
+		# confirmed after receipt of the PR
+		logger.info("Checking if PR is mergeable")
+		sleep(5)
+		# TODO: this prints an unwanted message to console
+		if (self.api_github.get_repo(self.payload['repository']['full_name'])
+							.get_pull(self.payload['pull_request']['number'])
+							.mergeable == True):
 			mergeable = True
 		else:
-			# TODO: do this in every case!
-			# It's possible that mergeable is incorrectly false.
-			# Maybe due to the check being asynchronous
-			# check again online, if not, then mergeable = False
-			logger.info("Re-checking if PR is mergeable")
-			sleep(5)
-			# TODO: this prints an unwanted message to console
-			if (self.api_github.get_repo(self.payload['repository']['full_name'])
-								.get_pull(self.payload['pull_request']['number'])
-								.mergeable == True):
-				mergeable = True
-			else:
-				mergeable = False
-				logger.warning('PR is not mergeable')
+			mergeable = False
+			logger.warning('PR is not mergeable')
+			# TODO: In this case, put an Error status on the commit
 		verified = verified and mergeable
 
 		if not verified:
@@ -153,7 +157,7 @@ class PrHandler(threading.Thread):
 		logger.info('Starting git processing of PR')
 		logger.debug(self.repo.git.checkout('master'))
 		git_command('submodule update --init', self.repodir)
-		
+
 		# Identify remotes, and create their objects
 		base_remote = None
 		head_remote = None
@@ -186,7 +190,7 @@ class PrHandler(threading.Thread):
 		else:
 			# branch does not exist locally yet, get it
 			git_command('checkout -b ' + base_branch_name + ' ' +
-					base_remote.name + '/' + base_branch_name)
+					base_remote.name + '/' + base_branch_name, self.repodir)
 		logger.debug(self.repo.git.submodule('update', '--init'))
 
 		logger.info('Getting the PR branch')
@@ -314,8 +318,8 @@ class PrHandler(threading.Thread):
 					self.payload['pull_request']['head']['sha'][1:7] +
 					'.md')
 				my_gist = self.api_github.get_user().create_gist(True,
-					{desc_file_name: InputFileContent(desc_string),
-					patch_file_name: InputFileContent(patchfile.read())},
+					{desc_file_name: github.InputFileContent(desc_string),
+					patch_file_name: github.InputFileContent(patchfile.read())},
 					'OF Code style patch for PR ' + str(result['pr_number']))
 		logger.info('Created Gist ' + my_gist.html_url)
 		return my_gist
