@@ -176,6 +176,7 @@ class PrHandler(threading.Thread):  # pylint: disable=R0902
 			sys.exit()
 
 		# update repo and check out base branch
+		LOGGER.info('Getting the base branch')
 		base_remote.fetch()
 		base_branch_name = self.payload['pull_request']['base']['ref']
 		LOGGER.debug('Base branch name: ' + base_branch_name)
@@ -211,8 +212,6 @@ class PrHandler(threading.Thread):  # pylint: disable=R0902
 									base_branch_name + '...' +
 									pr_branch_name, self.repodir, True, False))
 
-		self.repo.git.checkout(pr_branch_name)
-		LOGGER.debug(self.repo.git.submodule('update', '--init'))
 		# after this, we have a clean git repo with the PR branch checked out
 		return changed_files.split()
 
@@ -241,7 +240,7 @@ class PrHandler(threading.Thread):  # pylint: disable=R0902
 		# check if styling changed any files
 		if git_command('status --porcelain', self.repodir, True, False):
 			patch_file_name = ('pr-' + str(pr_number) + '.patch')
-			LOGGER.info('Creating patch file ' + patch_file_name)
+			LOGGER.info('Changes detected. Creating patch file ' + patch_file_name)
 			with open(os.path.join('patches', patch_file_name), 'w') as patchfile:
 				# OK to use git diff since only text files will be modified
 				patchfile.write(git_command('diff HEAD', self.repodir, True, False))
@@ -266,9 +265,7 @@ class PrHandler(threading.Thread):  # pylint: disable=R0902
 		# TODO: check if the merge itself still works:
 		# git format-patch master --stdout | git-apply --check
 
-		# *optional*: perform code style of OF itself to determine initial state
-		# This could be stored in gists.
-		# Clean up list of changed files
+		# TODO: *optional* perform code style of OF itself to determine initial state
 		return {'pr_number': pr_number,
 				'pr_url': pr_url,
 				'patch_file_name': patch_file_name}
