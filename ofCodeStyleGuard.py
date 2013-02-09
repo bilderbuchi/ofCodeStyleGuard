@@ -12,9 +12,7 @@ import github
 from time import sleep
 from styleguard_module import my_config, my_queue
 
-# TODO: refactor out git-python
 # TODO: Implement manual triggering of PR checks
-# TODO: Implement proper abort/bail system
 # TODO: web.py -> flask/Werkzeug
 
 LOGGER = logging.getLogger(' ')
@@ -63,12 +61,16 @@ class PrHandler(threading.Thread):  # pylint: disable=R0902
 #			LOGGER.debug('run self.queue id: ' + str(id(self.queue)))
 			self.payload = self.queue.get()
 			LOGGER.info("Aquired new payload: PR " + str(self.payload["number"]))
-			# TODO: guaranteeing clean_up could be done with exceptions!
 			if self.validate_pr():
-				changed_files = self.git_process_pr()
-				result = self.check_style(changed_files)
-				self.publish_results(result)
-				self.clean_up()
+				try:
+					changed_files = self.git_process_pr()
+					result = self.check_style(changed_files)
+					self.publish_results(result)
+				except PRHandlerException as exc:
+					LOGGER.error('An error occured in the PR handler:' + str(exc))
+				finally:
+					# guarantee that clean up runs even if exceptions occur
+					self.clean_up()
 			else:
 				LOGGER.warning('Skipping PR ' + str(self.payload["number"]))
 			self.queue.task_done()
@@ -127,7 +129,7 @@ class PrHandler(threading.Thread):  # pylint: disable=R0902
 			verified = verified and True
 		else:
 			verified = False
-			LOGGER.warning('PR is merged!')
+			LOGGER.warning('PR is already merged!')
 
 		# Mergeability checking is asynchronous on Github, so this has to be
 		# confirmed after receipt of the PR
@@ -139,8 +141,8 @@ class PrHandler(threading.Thread):  # pylint: disable=R0902
 			mergeable = True
 		else:
 			mergeable = False
-			LOGGER.warning('PR is not mergeable')
-			# TODO: In this case, put an Error or Pending status on the commit
+			LOGGER.warning('PR is not mergeable. Not styling files.')
+			# TODO: In this case, put a Pending status on the commit
 		verified = verified and mergeable
 
 		if not verified:
@@ -173,10 +175,9 @@ class PrHandler(threading.Thread):  # pylint: disable=R0902
 					base_remote = rem[0]
 					LOGGER.info('Base remote: ' + base_remote)
 		if base_remote is None:
-			LOGGER.critical('Base remote does not exist yet, with URL ' +
-							self.payload['pull_request']['base']['repo']['git_url'])
-			LOGGER.critical('Please create it first in the local git repo.')
-			sys.exit()
+			raise PRHandlerException('Base remote does not exist yet, with URL ' +
+							self.payload['pull_request']['base']['repo']['git_url'] +
+							' Please create it first in the local git repo.')
 
 		# update repo and check out base branch
 		LOGGER.info('Getting the base branch')
@@ -231,9 +232,6 @@ class PrHandler(threading.Thread):  # pylint: disable=R0902
 												'addons',
 												'apps',
 												'libs' + os.path.sep + 'openframeworks'))]
-#		LOGGER.debug('Filtered list of files to be style-checked:')
-#		for tmp_f in file_list:
-#			LOGGER.debug(tmp_f)
 		LOGGER.info('Styling files')
 		for tmp_file in file_list:
 			style_file(os.path.abspath(os.path.join(self.repodir, tmp_file)),
@@ -241,6 +239,7 @@ class PrHandler(threading.Thread):  # pylint: disable=R0902
 		LOGGER.info('Finished styling. Checking if there were changes.')
 		pr_number = self.payload['pull_request']['number']
 		pr_url = self.payload['pull_request']['html_url']
+
 		# check if styling changed any files
 		if git_command('status --porcelain', self.repodir, True, False):
 			patch_file_name = ('pr-' + str(pr_number) + '.patch')
@@ -253,9 +252,8 @@ class PrHandler(threading.Thread):  # pylint: disable=R0902
 			if git_command('apply --index --check ' +
 						os.path.join(self.basedir, 'patches', patch_file_name),
 						self.repodir, True):
-				LOGGER.critical('Patch' + patch_file_name +
+				raise PRHandlerException('Patch' + patch_file_name +
 								' does not apply cleanly, aborting!')
-				sys.exit()
 			else:
 				LOGGER.info('Patch ' + patch_file_name + ' applies cleanly')
 		else:
@@ -266,10 +264,7 @@ class PrHandler(threading.Thread):  # pylint: disable=R0902
 		LOGGER.debug('Resetting HEAD to get a clean repo')
 		git_command('reset --hard HEAD', self.repodir)
 		git_command('submodule update --init', self.repodir)
-		# TODO: check if the merge itself still works:
-		# git format-patch master --stdout | git-apply --check
 
-		# TODO: *optional* perform code style of OF itself to determine initial state
 		return {'pr_number': pr_number,
 				'pr_url': pr_url,
 				'patch_file_name': patch_file_name}
@@ -281,7 +276,7 @@ class PrHandler(threading.Thread):  # pylint: disable=R0902
 		elif my_config['feedback_method'] is "comment":
 			self.add_comment(result)
 		else:
-			LOGGER.error("Unknown feedback method: " +
+			raise PRHandlerException("Unknown feedback method: " +
 							str(my_config['feedback_method']))
 
 	def add_status(self, result):
@@ -300,16 +295,12 @@ class PrHandler(threading.Thread):  # pylint: disable=R0902
 			# no patch necessary-> green status
 			commit.create_status(state='success',
 								description='PR conforms to code style.')
-		# self.payload['pull_request']['head']['sha'] -> last commit
-		# commits=user.get_repo('openFrameworks').get_pull(1).get_commits()
-		# c.create_status(state='success',description='somestatus',
-		# target_url='http://sdfsdite.com')
 
 	def add_comment(self, result):
 		"""Add the relevant codestyle information via a comment on the thread"""
 		# TODO: Implement this
-		LOGGER.critical('Feedback via comments not yet implemented. Aborting.')
-		sys.exit()
+		raise PRHandlerException('Feedback via comments not yet implemented.' +
+									' Aborting.')
 
 	def create_gist(self, result):
 		"""Create gist with usage instructions and patch file.
@@ -332,9 +323,8 @@ class PrHandler(threading.Thread):  # pylint: disable=R0902
 		return my_gist
 
 	def clean_up(self):
-		"""Clean up the repo and reset cwd"""
-		# TODO: make sure this executes in any case!
-		# os.chdir(self.basedir)
+		"""Clean up the repo"""
+		LOGGER.info('Cleaning up.')
 		git_command('checkout master', self.repodir)
 		git_command('submodule update --init', self.repodir)
 
@@ -371,6 +361,10 @@ def style_file(my_file, style_tool_dir):
 		LOGGER.error(exc.cmd + ' failed with exit status ' +
 					exc.returncode + ':')
 		LOGGER.error(exc.output)
+
+
+class PRHandlerException(Exception):
+	pass
 
 
 class My_endpoint:
