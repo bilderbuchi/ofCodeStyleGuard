@@ -6,7 +6,6 @@ import json
 import threading
 import sys
 import os
-import git
 import subprocess
 import shlex
 import github
@@ -42,15 +41,19 @@ class PrHandler(threading.Thread):  # pylint: disable=R0902
 													my_config['repo_local_path']))
 		self.stylerdir = os.path.abspath(os.path.join(self.basedir,
 													my_config['style_tool_path']))
-		# TODO: Verify uncrustify minimum version
+
 		self.api_github = self.init_authentication()
 		if self.api_github == 1:
 			LOGGER.critical('Initialization failed. Aborting.')
 			sys.exit()
-		self.repo = git.Repo(self.repodir)
-		LOGGER.info('Local git repo at ' + str(self.repo.working_dir))
+		if os.path.isdir(os.path.join(self.repodir, '.git')):
+			LOGGER.info('Local git repo at ' + str(self.repodir))
+		else:
+			LOGGER.critical('Not a git repo directory: ' + str(self.repodir))
+			sys.exit()
+
 		LOGGER.info('Checking repo')
-		if self.repo.is_dirty():
+		if git_command('status --porcelain', self.repodir, True, False):
 			LOGGER.critical('Local git repo is dirty! Correct this first!')
 			sys.exit()
 
@@ -67,7 +70,7 @@ class PrHandler(threading.Thread):  # pylint: disable=R0902
 				self.publish_results(result)
 				self.clean_up()
 			else:
-				LOGGER.info('Skipping PR ' + str(self.payload["number"]))
+				LOGGER.warning('Skipping PR ' + str(self.payload["number"]))
 			self.queue.task_done()
 			LOGGER.info("Finished processing payload PR " + str(self.payload["number"]))
 			LOGGER.debug("self.queue size: " + str(self.queue.qsize()))
@@ -154,21 +157,21 @@ class PrHandler(threading.Thread):  # pylint: disable=R0902
 
 		Return the list of files added or modified in the PR"""
 		LOGGER.info('Starting git processing of PR')
-		self.repo.git.checkout('master')
+		git_command('checkout master', self.repodir)
 		git_command('submodule update --init', self.repodir)
 
-		# Identify remotes, and create their objects
+		# Identify base remote, and fetch updates
 		base_remote = None
-		head_remote = None
-		# TODO: nicer handling of remotes, both git and ssh urls
-		for rem in self.repo.remotes:
-			LOGGER.debug('Found remote ' + rem.name + ': ' + rem.url)
-			if rem.url == self.payload['pull_request']['base']['repo']['git_url']:
-				base_remote = rem
-				LOGGER.info('Base remote: ' + base_remote.name)
-			if rem.url == self.payload['pull_request']['head']['repo']['git_url']:
-				head_remote = rem
-				LOGGER.info('Head remote: ' + head_remote.name)
+		remotes_string = git_command('remote -v', self.repodir, True)
+		my_remotes = [x.split() for x in remotes_string.split('\n')]
+		# my_remotes[remotes][name-url-(fetch/push)]
+		for rem in my_remotes:
+			if rem[2] == "(fetch)":
+				LOGGER.debug('Found remote ' + rem[0] + ': ' + rem[1])
+				if (rem[1] == self.payload['pull_request']['base']['repo']['git_url']
+				or rem[1] == self.payload['pull_request']['base']['repo']['ssh_url']):
+					base_remote = rem[0]
+					LOGGER.info('Base remote: ' + base_remote)
 		if base_remote is None:
 			LOGGER.critical('Base remote does not exist yet, with URL ' +
 							self.payload['pull_request']['base']['repo']['git_url'])
@@ -177,7 +180,7 @@ class PrHandler(threading.Thread):  # pylint: disable=R0902
 
 		# update repo and check out base branch
 		LOGGER.info('Getting the base branch')
-		base_remote.fetch()
+		git_command('fetch ' + base_remote, self.repodir)
 		base_branch_name = self.payload['pull_request']['base']['ref']
 		LOGGER.debug('Base branch name: ' + base_branch_name)
 
@@ -185,13 +188,13 @@ class PrHandler(threading.Thread):  # pylint: disable=R0902
 				base_branch_name, self.repodir):
 			# branch already exists, check it out
 			git_command('checkout ' + base_branch_name, self.repodir)
-			git_command('merge ' + base_remote.name + '/' +
+			git_command('merge ' + base_remote + '/' +
 					base_branch_name, self.repodir)
 		else:
 			# branch does not exist locally yet, get it
 			git_command('checkout -b ' + base_branch_name + ' ' +
-					base_remote.name + '/' + base_branch_name, self.repodir)
-		LOGGER.debug(self.repo.git.submodule('update', '--init'))
+					base_remote + '/' + base_branch_name, self.repodir)
+		git_command('submodule update --init', self.repodir)
 		LOGGER.info('Base branch at: ' +
 					git_command('log --pretty=format:"%h - %s" -n 1 HEAD',
 								self.repodir, True, False))
@@ -199,10 +202,11 @@ class PrHandler(threading.Thread):  # pylint: disable=R0902
 		LOGGER.info('Getting the PR branch')
 		pr_number = self.payload['pull_request']['number']
 		pr_branch_name = 'pr-' + str(pr_number)
-		self.repo.git.fetch(self.payload['pull_request']['head']['repo']['git_url'],
-							'pull/' + str(pr_number) + '/head:' + pr_branch_name)
-		self.repo.git.checkout(pr_branch_name)
-		LOGGER.debug(self.repo.git.submodule('update', '--init'))
+		git_command('fetch ' +
+					self.payload['pull_request']['head']['repo']['git_url'] +
+					' pull/' + str(pr_number) + '/head:' + pr_branch_name, self.repodir)
+		git_command('checkout ' + pr_branch_name, self.repodir)
+		git_command('submodule update --init', self.repodir)
 		LOGGER.info('PR branch at: ' +
 			git_command('log --pretty=format:"%h - %s" -n 1 HEAD',
 						self.repodir, True, False))
@@ -261,7 +265,7 @@ class PrHandler(threading.Thread):  # pylint: disable=R0902
 		# now, reset HEAD so that the repo is clean again
 		LOGGER.debug('Resetting HEAD to get a clean repo')
 		git_command('reset --hard HEAD', self.repodir)
-		LOGGER.debug(self.repo.git.submodule('update', '--init'))
+		git_command('submodule update --init', self.repodir)
 		# TODO: check if the merge itself still works:
 		# git format-patch master --stdout | git-apply --check
 
@@ -331,7 +335,7 @@ class PrHandler(threading.Thread):  # pylint: disable=R0902
 		"""Clean up the repo and reset cwd"""
 		# TODO: make sure this executes in any case!
 		# os.chdir(self.basedir)
-		LOGGER.debug(self.repo.git.checkout('master'))
+		git_command('checkout master', self.repodir)
 		git_command('submodule update --init', self.repodir)
 
 
