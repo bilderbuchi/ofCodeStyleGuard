@@ -1,6 +1,6 @@
 #!/usr/bin/python
 """Automatic mechanism to make sure code style of PRs is checked."""
-import web
+
 import logging
 import json
 import threading
@@ -11,19 +11,13 @@ import shlex
 import github
 from time import sleep
 from styleguard_module import my_config, my_queue
+from flask import Flask, request
 
 # TODO: Implement manual triggering of PR checks
-# TODO: web.py -> flask/Werkzeug
-
 LOGGER = logging.getLogger(' ')
 logging.basicConfig(level=my_config['logging_level'])
-if my_config['logging_level'] == logging.DEBUG:
-	os.environ['GIT_PYTHON_TRACE'] = "full"  # '1' or 'full' for including output
-else:
-	os.environ['GIT_PYTHON_TRACE'] = "0"
-URLS = (
-	'/', 'My_endpoint'
-)
+APP = Flask(__name__)
+APP.logger.setLevel(my_config['logging_level'])
 
 
 class PrHandler(threading.Thread):  # pylint: disable=R0902
@@ -363,55 +357,50 @@ def style_file(my_file, style_tool_dir):
 
 
 class PRHandlerException(Exception):
+	""" Self-defined Exception for error handling"""
 	pass
 
 
-class My_endpoint:
-	""" Endpoint for webserver"""
+@APP.route('/', methods=['POST'])
+def api_pr():
+	""" React to a received POST request"""
+	LOGGER.info("Received POST request.")
 
-	def POST(self):
-		""" React to a received POST request"""
-		LOGGER.info("Received POST request.")
-		if web.ctx.ip not in my_config['github_ips']:
-			LOGGER.warning("Origin of request UNKNOWN: " + web.ctx.ip)
-			return
-		else:
-			LOGGER.debug("Origin of request: " + web.ctx.ip)
-		try:
-			payload = json.loads(web.input()['payload'])
-		except KeyError:
-			# crutch: if an invalid request arrives locally, load a json file directly
-			if web.ctx.ip == '127.0.0.1':
-				with open('sample_payload.json') as sample:
-					payload = json.load(sample)
-			else:
-				raise
-#		LOGGER.debug('POST my_queue id: ' + str(id(my_queue)))
-		sleep(0.5)  # to make sure the webserver has flushed  all log messages
-		self.handle_payload(payload, my_queue)
+	if request.remote_addr not in my_config['github_ips']:
+		LOGGER.warning("Origin of request UNKNOWN: " + request.remote_addr)
 		return
+	else:
+		LOGGER.debug("Origin of request: " + request.remote_addr)
 
-	@staticmethod
-	def handle_payload(payload, queue):
-		"""	Queue new PRs coming in during processing"""
-		LOGGER.info('Received PR ' + str(payload['number']) + ': ' +
-					payload['pull_request']['title'])
-		with open('last_payload.json', 'w') as outfile:
-			json.dump(payload, outfile, indent=2)
-		LOGGER.debug("handing payload off to queue")
-		queue.put(payload)
+	try:
+		payload = json.loads(request.form['payload'])
+	except KeyError:
+		# crutch: if an invalid request arrives locally, load a json file directly
+		if request.remote_addr == '127.0.0.1':
+			with open('sample_payload.json') as sample:
+				payload = json.load(sample)
+		else:
+			raise
+	handle_payload(payload, my_queue)
+	return 'OK'
+
+
+def handle_payload(payload, queue):
+	"""	Queue new PRs coming in during processing"""
+	LOGGER.info('Received PR ' + str(payload['number']) + ': ' +
+				payload['pull_request']['title'])
+	with open('last_payload.json', 'w') as outfile:
+		json.dump(payload, outfile, indent=2)
+	LOGGER.debug("handing payload off to queue")
+	queue.put(payload)
 
 
 def main():
 	"""Main function"""
-	if len(sys.argv) == 1:
-		sys.argv.append(str(my_config['local_port']))
 	threaded_pr_worker = PrHandler(my_queue)
 	threaded_pr_worker.daemon = True
 	threaded_pr_worker.start()
-#	LOGGER.debug('outer my_queue id: ' + str(id(my_queue)))
-	app = web.application(URLS, globals())
-	app.run()
+	APP.run(host='0.0.0.0', port=my_config['local_port'])
 	my_queue.join()
 
 if __name__ == "__main__":
