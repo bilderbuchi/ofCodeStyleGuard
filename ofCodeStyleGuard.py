@@ -203,9 +203,8 @@ class PrHandler(threading.Thread):  # pylint: disable=R0902
 		LOGGER.info('Getting the PR branch')
 		pr_number = self.payload['pull_request']['number']
 		pr_branch_name = 'pr-' + str(pr_number)
-		git_command('fetch ' +
-					self.payload['pull_request']['head']['repo']['git_url'] +
-					' pull/' + str(pr_number) + '/head:' + pr_branch_name, self.repodir)
+		git_command('fetch ' + base_remote + ' pull/' + str(pr_number) +
+					'/head:' + pr_branch_name, self.repodir)
 		git_command('checkout ' + pr_branch_name, self.repodir)
 		git_command('submodule update --init', self.repodir)
 		LOGGER.info('PR branch at: ' +
