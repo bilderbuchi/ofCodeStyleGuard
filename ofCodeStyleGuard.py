@@ -9,15 +9,20 @@ import os
 import subprocess
 import shlex
 import github
+import requests
 from time import sleep
 from styleguard_module import my_config, my_queue
 from flask import Flask, request
+import errno
+import shutil
 
 # TODO: Implement manual triggering of PR checks
 LOGGER = logging.getLogger(' ')
 logging.basicConfig(level=my_config['logging_level'])
 APP = Flask(__name__)
 APP.logger.setLevel(my_config['logging_level'])
+logging.getLogger('urllib3').setLevel(logging.WARNING)
+logging.getLogger('github.Requester').setLevel(logging.INFO)
 
 
 class PrHandler(threading.Thread):  # pylint: disable=R0902
@@ -28,26 +33,27 @@ class PrHandler(threading.Thread):  # pylint: disable=R0902
 		threading.Thread.__init__(self)
 		self.queue = queue
 		self.payload = None
-		self.basedir = os.getcwd()  # base directory
-		self.repodir = os.path.abspath(os.path.join(self.basedir,
-													my_config['repo_local_path']))
-		self.stylerdir = os.path.abspath(os.path.join(self.basedir,
-													my_config['style_tool_path']))
+		# base directory:
+		self.basedir = os.path.abspath(os.path.join(os.getcwd(),
+													my_config['storage_dir']))
+		self.repodir = os.path.join(self.basedir, my_config['repo_local_path'])
+		self.stylerdir = os.path.join(self.basedir, my_config['style_tool_path'])
 
 		self.api_github = self.init_authentication()
 		if self.api_github == 1:
+			# TODO: convert to exception calls?
 			LOGGER.critical('Initialization failed. Aborting.')
 			sys.exit()
-		if os.path.isdir(os.path.join(self.repodir, '.git')):
-			LOGGER.info('Local git repo at ' + str(self.repodir))
-		else:
-			LOGGER.critical('Not a git repo directory: ' + str(self.repodir))
-			sys.exit()
-
-		LOGGER.info('Checking repo')
-		if git_command('status --porcelain', self.repodir, True, False):
-			LOGGER.critical('Local git repo is dirty! Correct this first!')
-			sys.exit()
+		if my_config['fetch_method'] == 'git':
+			if os.path.isdir(os.path.join(self.repodir, '.git')):
+				LOGGER.info('Local git repo at ' + str(self.repodir))
+			else:
+				LOGGER.critical('Not a git repo directory: ' + str(self.repodir))
+				sys.exit()
+			LOGGER.info('Checking repo')
+			if git_command('status --porcelain', self.repodir, True, False):
+				LOGGER.critical('Local git repo is dirty! Correct this first!')
+				sys.exit()
 
 	def run(self):
 		while True:
@@ -57,7 +63,10 @@ class PrHandler(threading.Thread):  # pylint: disable=R0902
 			LOGGER.info("Aquired new payload: PR " + str(self.payload["number"]))
 			if self.validate_pr():
 				try:
-					changed_files = self.git_process_pr()
+					if my_config['fetch_method'] == 'git':
+						changed_files = self.git_process_pr()
+					elif my_config['fetch_method'] == 'file':
+						changed_files = self.file_process_pr()
 					result = self.check_style(changed_files)
 					self.publish_results(result)
 				except PRHandlerException as exc:
@@ -71,11 +80,11 @@ class PrHandler(threading.Thread):  # pylint: disable=R0902
 			LOGGER.info("Finished processing payload PR " + str(self.payload["number"]))
 			LOGGER.debug("self.queue size: " + str(self.queue.qsize()))
 
-	@staticmethod
-	def init_authentication():
+	def init_authentication(self):
 		"""Create appropriate Github API user"""
 		LOGGER.info('Creating API-authenticated user')
-		with open(my_config['authfile'], 'r') as authfile:
+		with open(os.path.join(self.basedir,
+								my_config['authfile']), 'r') as authfile:
 			auths_temp = json.load(authfile)
 		if my_config['feedback_method'] == "status":
 			if all(scope in auths_temp['ofbot_codestyle_status']['scopes']
@@ -149,7 +158,7 @@ class PrHandler(threading.Thread):  # pylint: disable=R0902
 		return verified
 
 	def git_process_pr(self):
-		"""Process the git repo, merge the PR if mergeable.
+		"""Process the PR using the git repo.
 
 		Return the list of files added or modified in the PR"""
 		LOGGER.info('Starting git processing of PR')
@@ -213,18 +222,79 @@ class PrHandler(threading.Thread):  # pylint: disable=R0902
 		# after this, we have a clean git repo with the PR branch checked out
 		return changed_files.split()
 
-	def check_style(self, file_list):
-		"""Check style of the given list of files"""
-		LOGGER.info('Checking style of changed/added files')
+	def file_process_pr(self):
+		"""Process the PR using manually fetched files.
+		This has the advantage that the disk space requirements are lower.
+
+		Return the list of files added or modified in the PR
+		"""
+		LOGGER.info('Starting processing of PR with fetched files')
+		LOGGER.info('Generating list of changed files')
+		pr_repo = self.api_github.get_repo(self.payload['repository']['full_name'])
+		pr_api = pr_repo.get_pull(self.payload['pull_request']['number'])
+		changed_files = []
+
+		LOGGER.info('Fetching PR files. This will take a while.')
+		pr_files = pr_api.get_files()
+		session = requests.Session()
+
+		for tmp_f in pr_files:
+			if ((tmp_f.status in ['modified', 'added'])
+			and self.filter_file_list([tmp_f.filename])):
+				changed_files.append(tmp_f.filename)  # full path from repo root
+				LOGGER.debug('Fetching ' + tmp_f.filename)
+				resp = session.get(tmp_f.raw_url)
+#					if not r.ok:
+#						LOGGER.error('Error requesting ' + tmp_f.raw_url)
+#						# TODO: maybe raise exception here
+#						continue
+				destination = os.path.join(self.repodir, tmp_f.filename)
+				try:
+					os.makedirs(os.path.dirname(destination))
+				except os.error as exc:
+					if exc.errno != errno.EEXIST:
+						raise
+				with open(destination, 'wb') as store_file:
+					store_file.write(resp.content)
+		session.close()
+
+		LOGGER.info('Fetching styler files')
+		raise PRHandlerException('Fetching styler is not yet implemented. Wait for PyGithub patch')
+		# TODO: implement
+#		pr_commit = self.payload['pull_request']['head']['repo']['sha']
+		pr_commit = pr_api.head.sha
+#		pr_repo.get_contents(path, pr_commit)
+
+		LOGGER.info('Creating temporary git repository')
+		git_command('init', self.repodir)
+		git_command('add .', self.repodir)
+		git_command('commit -am "PR commit"', self.repodir)
+
+		# we end up with a clean small git repo containing the PR files
+		return changed_files
+
+	@staticmethod
+	def filter_file_list(file_list):
+		"""Filter a list of file paths according to defined criteria.
+
+		Return filtered list"""
 		# Only check files touched by the PR which are also in the desired fileset:
 		# `cpp` and `h` files in official `addons`, `examples`, `devApps`,
 		# `libs/openFrameworks`)
-		file_list = [filename for filename in file_list if
-					filename.lower().endswith(('.cpp', '.h')) and
-					filename.lower().startswith(('examples',
-												'addons',
-												'apps',
-												'libs' + os.path.sep + 'openframeworks'))]
+#		LOGGER.info('Filtering file list')
+		dummy_list = [filename for filename in file_list if
+			filename.lower().endswith(('.cpp', '.h')) and
+			filename.lower().startswith(('examples',
+										'addons',
+										'apps',
+										'libs' + os.path.sep + 'openframeworks'))]
+		return dummy_list
+
+	def check_style(self, file_list):
+		"""Check style of the given list of files"""
+		LOGGER.info('Checking style of changed/added files')
+		file_list = self.filter_file_list(file_list)
+
 		LOGGER.info('Styling files')
 		for tmp_file in file_list:
 			style_file(os.path.abspath(os.path.join(self.repodir, tmp_file)),
@@ -237,7 +307,8 @@ class PrHandler(threading.Thread):  # pylint: disable=R0902
 		if git_command('status --porcelain', self.repodir, True, False):
 			patch_file_name = ('pr-' + str(pr_number) + '.patch')
 			LOGGER.info('Changes detected. Creating patch file ' + patch_file_name)
-			with open(os.path.join('patches', patch_file_name), 'w') as patchfile:
+			with open(os.path.join(self.basedir, 'patches',
+									patch_file_name), 'w') as patchfile:
 				# OK to use git diff since only text files will be modified
 				patchfile.write(git_command('diff HEAD', self.repodir, True, False))
 			# test if patch applies cleanly
@@ -302,7 +373,7 @@ class PrHandler(threading.Thread):  # pylint: disable=R0902
 		LOGGER.info('Creating gist')
 		with open('gist_description.md', 'r') as descfile:
 			desc_string = descfile.read().format(result['pr_number'], result['pr_url'])
-			with open(os.path.join('patches', result['patch_file_name']),
+			with open(os.path.join(self.basedir, 'patches', result['patch_file_name']),
 					'r') as patchfile:
 				patch_file_name = 'pr-' + str(result['pr_number']) + '.patch'
 				desc_file_name = ('OF_PR' + str(result['pr_number']) + '-' +
@@ -318,8 +389,12 @@ class PrHandler(threading.Thread):  # pylint: disable=R0902
 	def clean_up(self):
 		"""Clean up the repo"""
 		LOGGER.info('Cleaning up.')
-		git_command('checkout master', self.repodir)
-		git_command('submodule update --init', self.repodir)
+		if my_config['fetch_method'] == 'git':
+			git_command('checkout master', self.repodir)
+			git_command('submodule update --init', self.repodir)
+		elif my_config['fetch_method'] == 'file':
+			shutil.rmtree(self.repodir)
+			os.mkdir(self.repodir)
 
 
 def git_command(arg_string, repo_dir, return_output=False, log_output=True):
