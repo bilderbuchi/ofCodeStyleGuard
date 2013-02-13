@@ -15,7 +15,10 @@ from flask import Flask, request
 import errno
 import shutil
 
+from stat import S_IEXEC
+
 # TODO: Implement manual triggering of PR checks
+# TODO: log to file
 LOGGER = logging.getLogger(' ')
 logging.basicConfig(level=cfg['logging_level'])
 APP = Flask(__name__)
@@ -73,6 +76,7 @@ class PrHandler(threading.Thread):  # pylint: disable=R0902
 					self.clean_up()
 			else:
 				LOGGER.warning('Skipping PR ' + str(self.payload["number"]))
+			# TODO: print number of left API calls
 			self.queue.task_done()
 			LOGGER.info("Finished processing payload PR " + str(self.payload["number"]))
 			LOGGER.debug("self.queue size: " + str(self.queue.qsize()))
@@ -248,17 +252,39 @@ class PrHandler(threading.Thread):  # pylint: disable=R0902
 						raise
 				with open(destination, 'wb') as store_file:
 					store_file.write(resp.content)
-		session.close()
+#		session.close()
 
 		LOGGER.info('Fetching styler files')
-		raise PRHandlerException('Fetching styler is not yet implemented. Wait for PyGithub patch')
-		# TODO: implement
+#		raise PRHandlerException('Fetching styler is not yet implemented. Wait for PyGithub patch')
+		# TODO: properly implement fetching styler files
 #		pr_commit = self.payload['pull_request']['head']['repo']['sha']
 		pr_commit = pr_api.head.sha
+		# temporary workaround
+		styler_files = ['scripts/dev/style/ofStyler',
+						'scripts/dev/style/openFrameworks_style.cfg',
+						'scripts/dev/style/core_header.txt']
+		for styler_file in styler_files:
+			destination = self.repodir + styler_file
+			try:
+				os.makedirs(os.path.dirname(destination))
+			except os.error as exc:
+				if exc.errno != errno.EEXIST:
+					raise
+			with open(destination, 'wb') as fh:
+				content = pr_repo.get_contents(styler_file, pr_commit).content
+				encoding = pr_repo.get_contents(styler_file, pr_commit).encoding
+				fh.write(content.decode(encoding))
+			if styler_file.endswith('ofStyler'):
+				st = os.stat(destination)
+				os.chmod(destination, st.st_mode | S_IEXEC)
+
+
 #		pr_repo.get_contents(path, pr_commit)
 
 		LOGGER.info('Creating temporary git repository')
 		git_command('init', self.repodir)
+		git_command('config core.autocrlf input', self.repodir)
+		git_command('config core.filemode false', self.repodir)
 		git_command('add .', self.repodir)
 		git_command('commit -am "PR commit"', self.repodir)
 
@@ -418,8 +444,8 @@ def style_file(my_file, style_tool_dir):
 		if output:
 			LOGGER.debug(str(output).rstrip('\n'))
 	except subprocess.CalledProcessError as exc:
-		LOGGER.error(exc.cmd + ' failed with exit status ' +
-					exc.returncode + ':')
+		LOGGER.error(str(exc.cmd) + ' failed with exit status ' +
+					str(exc.returncode) + ':')
 		LOGGER.error(exc.output)
 
 
