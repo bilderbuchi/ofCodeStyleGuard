@@ -11,16 +11,16 @@ import shlex
 import github
 import requests
 from time import sleep
-from styleguard_module import my_config, my_queue
+from styleguard_module import cfg, my_queue
 from flask import Flask, request
 import errno
 import shutil
 
 # TODO: Implement manual triggering of PR checks
 LOGGER = logging.getLogger(' ')
-logging.basicConfig(level=my_config['logging_level'])
+logging.basicConfig(level=cfg['logging_level'])
 APP = Flask(__name__)
-APP.logger.setLevel(my_config['logging_level'])
+APP.logger.setLevel(cfg['logging_level'])
 logging.getLogger('urllib3').setLevel(logging.WARNING)
 logging.getLogger('github.Requester').setLevel(logging.INFO)
 
@@ -35,16 +35,16 @@ class PrHandler(threading.Thread):  # pylint: disable=R0902
 		self.payload = None
 		# base directory:
 		self.basedir = os.path.abspath(os.path.join(os.getcwd(),
-													my_config['storage_dir']))
-		self.repodir = os.path.join(self.basedir, my_config['repo_local_path'])
-		self.stylerdir = os.path.join(self.basedir, my_config['style_tool_path'])
+													cfg['storage_dir']))
+		self.repodir = os.path.join(self.basedir, cfg['repo_local_path'])
+		self.stylerdir = os.path.join(self.basedir, cfg['style_tool_path'])
 
 		self.api_github = self.init_authentication()
 		if self.api_github == 1:
 			# TODO: convert to exception calls?
 			LOGGER.critical('Initialization failed. Aborting.')
 			sys.exit()
-		if my_config['fetch_method'] == 'git':
+		if cfg['fetch_method'] == 'git':
 			if os.path.isdir(os.path.join(self.repodir, '.git')):
 				LOGGER.info('Local git repo at ' + str(self.repodir))
 			else:
@@ -63,9 +63,9 @@ class PrHandler(threading.Thread):  # pylint: disable=R0902
 			LOGGER.info("Aquired new payload: PR " + str(self.payload["number"]))
 			if self.validate_pr():
 				try:
-					if my_config['fetch_method'] == 'git':
+					if cfg['fetch_method'] == 'git':
 						changed_files = self.git_process_pr()
-					elif my_config['fetch_method'] == 'file':
+					elif cfg['fetch_method'] == 'file':
 						changed_files = self.file_process_pr()
 					result = self.check_style(changed_files)
 					self.publish_results(result)
@@ -83,10 +83,9 @@ class PrHandler(threading.Thread):  # pylint: disable=R0902
 	def init_authentication(self):
 		"""Create appropriate Github API user"""
 		LOGGER.info('Creating API-authenticated user')
-		with open(os.path.join(self.basedir,
-								my_config['authfile']), 'r') as authfile:
+		with open(os.path.join(self.basedir, cfg['authfile']), 'r') as authfile:
 			auths_temp = json.load(authfile)
-		if my_config['feedback_method'] == "status":
+		if cfg['feedback_method'] == "status":
 			if all(scope in auths_temp['ofbot_codestyle_status']['scopes']
 					for scope in ['repo:status', 'gist']):
 				# Return authorized PyGithub Github API instance
@@ -104,25 +103,25 @@ class PrHandler(threading.Thread):  # pylint: disable=R0902
 				LOGGER.error('Could not authenticate for Status API' +
 							' with auth ofbot_codestyle_status')
 				return 1
-		elif my_config['feedback_method'] == "comment":
+		elif cfg['feedback_method'] == "comment":
 			LOGGER.critical('Comment authorization not yet implemented!')
 #			TODO: implement comment-style PR feedback
 			return 1
 		else:
 			LOGGER.error("Unknown feedback method: " +
-							str(my_config['feedback_method']))
+							str(cfg['feedback_method']))
 			return 1
 
 	def validate_pr(self):
 		"""Determine if the current PR is valid for processing"""
 		LOGGER.info('Verifying information from payload')
-		if self.payload['repository']['git_url'] == my_config['repo_git_url']:
+		if self.payload['repository']['git_url'] == cfg['repo_git_url']:
 			verified = True
 		else:
 			verified = False
 			LOGGER.warning('PR git_url ' +
 							self.payload['repository']['git_url'] +
-							' does not match config: ' + my_config['repo_git_url'])
+							' does not match config: ' + cfg['repo_git_url'])
 		if self.payload['action'] != 'closed':
 			verified = verified and True
 		else:
@@ -335,13 +334,13 @@ class PrHandler(threading.Thread):  # pylint: disable=R0902
 
 	def publish_results(self, result):
 		"""Report back to PR, either via Github Status API or ofbot comments"""
-		if my_config['feedback_method'] is "status":
+		if cfg['feedback_method'] is "status":
 			self.add_status(result)
-		elif my_config['feedback_method'] is "comment":
+		elif cfg['feedback_method'] is "comment":
 			self.add_comment(result)
 		else:
 			raise PRHandlerException("Unknown feedback method: " +
-							str(my_config['feedback_method']))
+							str(cfg['feedback_method']))
 
 	def add_status(self, result):
 		"""Add the relevant codestyle information via a PR Status"""
@@ -389,10 +388,10 @@ class PrHandler(threading.Thread):  # pylint: disable=R0902
 	def clean_up(self):
 		"""Clean up the repo"""
 		LOGGER.info('Cleaning up.')
-		if my_config['fetch_method'] == 'git':
+		if cfg['fetch_method'] == 'git':
 			git_command('checkout master', self.repodir)
 			git_command('submodule update --init', self.repodir)
-		elif my_config['fetch_method'] == 'file':
+		elif cfg['fetch_method'] == 'file':
 			shutil.rmtree(self.repodir)
 			os.mkdir(self.repodir)
 
@@ -441,7 +440,7 @@ def api_pr():
 	""" React to a received POST request"""
 	LOGGER.info("Received POST request.")
 
-	if request.remote_addr not in my_config['github_ips']:
+	if request.remote_addr not in cfg['github_ips']:
 		LOGGER.warning("Origin of request UNKNOWN: " + request.remote_addr)
 		return
 	else:
@@ -475,7 +474,7 @@ def main():
 	threaded_pr_worker = PrHandler(my_queue)
 	threaded_pr_worker.daemon = True
 	threaded_pr_worker.start()
-	APP.run(host='0.0.0.0', port=my_config['local_port'])
+	APP.run(host='0.0.0.0', port=cfg['local_port'])
 	my_queue.join()
 
 if __name__ == "__main__":

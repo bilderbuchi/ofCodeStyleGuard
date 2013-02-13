@@ -1,7 +1,8 @@
 import logging
 import Queue
 
-my_config = dict(
+# dictionary with configuration parameters
+cfg = dict(
 	repo_git_url="git://github.com/bilderbuchi/openFrameworks.git",
 	storage_dir='data/',
 	repo_local_path="openFrameworks_files/",
