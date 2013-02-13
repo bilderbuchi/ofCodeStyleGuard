@@ -4,7 +4,6 @@
 import logging
 import json
 import threading
-import sys
 import os
 import subprocess
 import shlex
@@ -41,19 +40,17 @@ class PrHandler(threading.Thread):  # pylint: disable=R0902
 
 		self.api_github = self.init_authentication()
 		if self.api_github == 1:
-			# TODO: convert to exception calls?
-			LOGGER.critical('Initialization failed. Aborting.')
-			sys.exit()
+			raise PRHandlerException('Initialization failed. Aborting.')
 		if cfg['fetch_method'] == 'git':
 			if os.path.isdir(os.path.join(self.repodir, '.git')):
 				LOGGER.info('Local git repo at ' + str(self.repodir))
 			else:
-				LOGGER.critical('Not a git repo directory: ' + str(self.repodir))
-				sys.exit()
+				raise PRHandlerException('Not a git repo directory: ' +
+										str(self.repodir))
 			LOGGER.info('Checking repo')
 			if git_command('status --porcelain', self.repodir, True, False):
-				LOGGER.critical('Local git repo is dirty! Correct this first!')
-				sys.exit()
+				raise PRHandlerException('Local git repo is dirty!' +
+										' Correct this first!')
 
 	def run(self):
 		while True:
@@ -243,10 +240,6 @@ class PrHandler(threading.Thread):  # pylint: disable=R0902
 				changed_files.append(tmp_f.filename)  # full path from repo root
 				LOGGER.debug('Fetching ' + tmp_f.filename)
 				resp = session.get(tmp_f.raw_url)
-#					if not r.ok:
-#						LOGGER.error('Error requesting ' + tmp_f.raw_url)
-#						# TODO: maybe raise exception here
-#						continue
 				destination = os.path.join(self.repodir, tmp_f.filename)
 				try:
 					os.makedirs(os.path.dirname(destination))
