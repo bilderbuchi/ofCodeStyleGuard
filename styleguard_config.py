@@ -1,3 +1,4 @@
+""" Configuration for styleguard"""
 import logging
 
 # dictionary with configuration parameters
