@@ -6,5 +6,5 @@ setup(name='ofCodeStyleGuard',
 	author='Christoph Buchner',
 	author_email='bilderbuchi@phononoia.at',
 	url='http://ofCodeStyleGuard-bilderbuchi.rhcloud.com/',
-	install_requires=['PyGithub', 'Flask>=0.7.2'],
+	install_requires=['PyGithub', 'Flask>=0.7.2', 'requests'],
 	)
