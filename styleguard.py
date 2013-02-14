@@ -457,7 +457,8 @@ def handle_payload(payload):
 	"""	Queue new PRs coming in during processing"""
 	LOGGER.info('Received PR ' + str(payload['number']) + ': ' +
 				payload['pull_request']['title'])
-	with open('last_payload.json', 'w') as outfile:
+	basedir = os.path.abspath(os.path.join(os.getcwd(), cfg['storage_dir']))
+	with open(os.path.join(basedir, 'last_payload.json'), 'w') as outfile:
 		json.dump(payload, outfile, indent=2)
 	LOGGER.debug("handing payload off to queue")
 	MY_QUEUE.put(payload)

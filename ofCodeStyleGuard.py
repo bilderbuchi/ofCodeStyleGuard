@@ -3,6 +3,7 @@
 import styleguard
 import logging
 import json
+import os
 from flask import Flask, request
 
 LOGGER = logging.getLogger('webserver')
@@ -28,7 +29,8 @@ def api_pr():
 	except KeyError:
 		# crutch: if an invalid request arrives locally, load a json file directly
 		if request.remote_addr == '127.0.0.1':
-			with open('sample_payload.json') as sample:
+			location = os.getenv('OPENSHIFT_REPO_DIR', '')
+			with open(os.path.join(location, 'sample_payload.json'), 'r') as sample:
 				payload = json.load(sample)
 		else:
 			raise
