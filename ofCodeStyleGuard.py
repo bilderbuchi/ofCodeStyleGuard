@@ -20,7 +20,8 @@ def api_pr():
 
 	if request.remote_addr not in styleguard.cfg['github_ips']:
 		LOGGER.warning("Origin of request UNKNOWN: " + request.remote_addr)
-		return
+		return 'Error'
+	# TODO: 'proper' return objects here and below
 	else:
 		LOGGER.debug("Origin of request: " + request.remote_addr)
 
