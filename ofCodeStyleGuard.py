@@ -48,9 +48,8 @@ def handle_payload(payload, queue):
 
 def main():
 	"""Main function"""
-	threaded_pr_worker = styleguard.PrHandler(styleguard.MY_QUEUE)
-	threaded_pr_worker.daemon = True
-	threaded_pr_worker.start()
+	# Instantiate a PrHandler, which start waiting on styleguard.MY_QUEUE
+	_threaded_pr_worker = styleguard.PrHandler()
 	APP.run(host='0.0.0.0', port=styleguard.cfg['local_port'])
 	styleguard.MY_QUEUE.join()
 

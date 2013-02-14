@@ -24,13 +24,13 @@ logging.getLogger('github.Requester').setLevel(logging.INFO)
 MY_QUEUE = Queue.Queue()
 
 
-class PrHandler(threading.Thread):  # pylint: disable=R0902
+class PrHandler(threading.Thread):
 	"""Threaded PR Worker"""
 
-	def __init__(self, queue):
+	def __init__(self):
 		LOGGER.debug("Starting PR worker thread")
 		threading.Thread.__init__(self)
-		self.queue = queue
+		self.queue = MY_QUEUE
 		self.payload = None
 		# base directory:
 		self.basedir = os.path.abspath(os.path.join(os.getcwd(),
@@ -53,6 +53,8 @@ class PrHandler(threading.Thread):  # pylint: disable=R0902
 			if git_command('status --porcelain', self.repodir, True, False):
 				raise PRHandlerException('Local git repo is dirty!' +
 										' Correct this first!')
+		self.daemon = True
+		self.start()
 
 	def run(self):
 		while True:
