@@ -17,6 +17,8 @@ cfg = dict(
 #
 #	Web server configuration:
 	local_port=4896,
-	github_ips={'207.97.227.253', '50.57.128.197', '108.171.174.178',
-				'50.57.231.61', '127.0.0.1'}
+	github_ips=['207.97.227.253', '50.57.128.197', '108.171.174.178',
+				'50.57.231.61', '127.0.0.1']
 )
+
+#repo_local_path=os.getenv('OPENSHIFT_DATA_DIR', 'openFrameworks/'),

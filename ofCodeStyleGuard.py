@@ -39,6 +39,7 @@ def api_pr():
 def main():
 	"""Main function"""
 	# Instantiate a PrHandler, which start waiting on styleguard.MY_QUEUE
+	LOGGER.debug('In ofCodeStyleGuard main function')
 	_threaded_pr_worker = styleguard.PrHandler()
 	APP.run(host='0.0.0.0', port=styleguard.cfg['local_port'])
 	styleguard.MY_QUEUE.join()
