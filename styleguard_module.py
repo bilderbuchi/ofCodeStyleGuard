@@ -1,5 +1,4 @@
 import logging
-import Queue
 
 # dictionary with configuration parameters
 cfg = dict(
@@ -18,6 +17,3 @@ cfg = dict(
 	local_port=4896,
 	authfile='auths.json'
 )
-
-# ugly hack/workaround for web.py globals issue
-my_queue = Queue.Queue()

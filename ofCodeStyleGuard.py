@@ -9,8 +9,9 @@ import subprocess
 import shlex
 import github
 import requests
+import Queue
 from time import sleep
-from styleguard_module import cfg, my_queue
+from styleguard_module import cfg
 from flask import Flask, request
 import errno
 import shutil
@@ -25,6 +26,7 @@ APP = Flask(__name__)
 APP.logger.setLevel(cfg['logging_level'])
 logging.getLogger('urllib3').setLevel(logging.WARNING)
 logging.getLogger('github.Requester').setLevel(logging.INFO)
+MY_QUEUE = Queue.Queue()
 
 
 class PrHandler(threading.Thread):  # pylint: disable=R0902
@@ -474,7 +476,7 @@ def api_pr():
 				payload = json.load(sample)
 		else:
 			raise
-	handle_payload(payload, my_queue)
+	handle_payload(payload, MY_QUEUE)
 	return 'OK'
 
 
@@ -490,11 +492,11 @@ def handle_payload(payload, queue):
 
 def main():
 	"""Main function"""
-	threaded_pr_worker = PrHandler(my_queue)
+	threaded_pr_worker = PrHandler(MY_QUEUE)
 	threaded_pr_worker.daemon = True
 	threaded_pr_worker.start()
 	APP.run(host='0.0.0.0', port=cfg['local_port'])
-	my_queue.join()
+	MY_QUEUE.join()
 
 if __name__ == "__main__":
 	main()
