@@ -414,6 +414,11 @@ class PrHandler(threading.Thread):
 			os.mkdir(self.repodir)
 
 
+class PRHandlerException(Exception):
+	""" Self-defined Exception for error handling"""
+	pass
+
+
 def git_command(arg_string, repo_dir, return_output=False, log_output=True):
 	"""Execute git command in repo_dir and log output to LOGGER"""
 	try:
@@ -448,6 +453,11 @@ def style_file(my_file, style_tool_dir):
 		LOGGER.error(exc.output)
 
 
-class PRHandlerException(Exception):
-	""" Self-defined Exception for error handling"""
-	pass
+def handle_payload(payload):
+	"""	Queue new PRs coming in during processing"""
+	LOGGER.info('Received PR ' + str(payload['number']) + ': ' +
+				payload['pull_request']['title'])
+	with open('last_payload.json', 'w') as outfile:
+		json.dump(payload, outfile, indent=2)
+	LOGGER.debug("handing payload off to queue")
+	MY_QUEUE.put(payload)

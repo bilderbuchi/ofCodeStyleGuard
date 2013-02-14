@@ -32,18 +32,8 @@ def api_pr():
 				payload = json.load(sample)
 		else:
 			raise
-	handle_payload(payload, styleguard.MY_QUEUE)
+	styleguard.handle_payload(payload)
 	return 'OK'
-
-
-def handle_payload(payload, queue):
-	"""	Queue new PRs coming in during processing"""
-	LOGGER.info('Received PR ' + str(payload['number']) + ': ' +
-				payload['pull_request']['title'])
-	with open('last_payload.json', 'w') as outfile:
-		json.dump(payload, outfile, indent=2)
-	LOGGER.debug("handing payload off to queue")
-	queue.put(payload)
 
 
 def main():
