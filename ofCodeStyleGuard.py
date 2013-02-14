@@ -44,6 +44,8 @@ class PrHandler(threading.Thread):  # pylint: disable=R0902
 		self.api_github = self.init_authentication()
 		if self.api_github == 1:
 			raise PRHandlerException('Initialization failed. Aborting.')
+		LOGGER.debug('Remaining Github API calls: ' +
+					str(self.api_github.rate_limiting[0]))
 		if cfg['fetch_method'] == 'git':
 			if os.path.isdir(os.path.join(self.repodir, '.git')):
 				LOGGER.info('Local git repo at ' + str(self.repodir))
@@ -76,7 +78,8 @@ class PrHandler(threading.Thread):  # pylint: disable=R0902
 					self.clean_up()
 			else:
 				LOGGER.warning('Skipping PR ' + str(self.payload["number"]))
-			# TODO: print number of left API calls
+			LOGGER.debug('Remaining Github API calls: ' +
+						str(self.api_github.rate_limiting[0]))
 			self.queue.task_done()
 			LOGGER.info("Finished processing payload PR " + str(self.payload["number"]))
 			LOGGER.debug("self.queue size: " + str(self.queue.qsize()))
@@ -235,10 +238,9 @@ class PrHandler(threading.Thread):  # pylint: disable=R0902
 		changed_files = []
 
 		LOGGER.info('Fetching PR files. This will take a while.')
-		pr_files = pr_api.get_files()
 		session = requests.Session()
 
-		for tmp_f in pr_files:
+		for tmp_f in pr_api.get_files():
 			if ((tmp_f.status in ['modified', 'added'])
 			and self.filter_file_list([tmp_f.filename])):
 				changed_files.append(tmp_f.filename)  # full path from repo root
@@ -251,13 +253,13 @@ class PrHandler(threading.Thread):  # pylint: disable=R0902
 					if exc.errno != errno.EEXIST:
 						raise
 				with open(destination, 'wb') as store_file:
-					store_file.write(resp.content)
+					store_file.write(resp.content)  # pylint: disable=E1103
 #		session.close()
 
 		LOGGER.info('Fetching styler files')
-#		raise PRHandlerException('Fetching styler is not yet implemented. Wait for PyGithub patch')
+		# raise PRHandlerException('Fetching styler is not yet implemented. Wait for PyGithub patch')
 		# TODO: properly implement fetching styler files
-#		pr_commit = self.payload['pull_request']['head']['repo']['sha']
+		# pr_commit = self.payload['pull_request']['head']['repo']['sha']
 		pr_commit = pr_api.head.sha
 		# temporary workaround
 		styler_files = ['scripts/dev/style/ofStyler',
@@ -270,14 +272,12 @@ class PrHandler(threading.Thread):  # pylint: disable=R0902
 			except os.error as exc:
 				if exc.errno != errno.EEXIST:
 					raise
-			with open(destination, 'wb') as fh:
+			with open(destination, 'wb') as filehandle:
 				content = pr_repo.get_contents(styler_file, pr_commit).content
 				encoding = pr_repo.get_contents(styler_file, pr_commit).encoding
-				fh.write(content.decode(encoding))
+				filehandle.write(content.decode(encoding))
 			if styler_file.endswith('ofStyler'):
-				st = os.stat(destination)
-				os.chmod(destination, st.st_mode | S_IEXEC)
-
+				os.chmod(destination, os.stat(destination).st_mode | S_IEXEC)
 
 #		pr_repo.get_contents(path, pr_commit)
 
