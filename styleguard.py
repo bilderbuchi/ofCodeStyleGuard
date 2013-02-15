@@ -265,7 +265,7 @@ class PrHandler(threading.Thread):
 						'scripts/dev/style/openFrameworks_style.cfg',
 						'scripts/dev/style/core_header.txt']
 		for styler_file in styler_files:
-			destination = self.repodir + styler_file
+			destination = os.path.join(self.repodir, styler_file)
 			try:
 				os.makedirs(os.path.dirname(destination))
 			except os.error as exc:
