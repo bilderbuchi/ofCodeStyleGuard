@@ -11,6 +11,7 @@ logging.basicConfig(level=styleguard.cfg['logging_level'])
 APP = Flask(__name__)
 APP.logger.setLevel(styleguard.cfg['logging_level'])
 logging.getLogger('urllib3').setLevel(logging.WARNING)
+logging.getLogger('requests.packages.urllib3').setLevel(logging.INFO)
 
 
 @APP.route('/', methods=['POST'])
