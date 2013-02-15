@@ -13,6 +13,24 @@ except IOError:
 # IMPORTANT: Put any additional includes below this line.  If placed above this
 # line, it's possible required libraries won't be in your searchable path
 
+# TODO: Remove this after Python2.7 becomes available on OpenShift
+# Monkey-patching in subprocess.check_output
+import subprocess
+if "check_output" not in dir( subprocess ): # duck punch it in!
+	def f(*popenargs, **kwargs):
+		if 'stdout' in kwargs:
+			raise ValueError('stdout argument not allowed, it will be overridden.')
+		process = subprocess.Popen(stdout=subprocess.PIPE, *popenargs, **kwargs)
+		output, unused_err = process.communicate()
+		retcode = process.poll()
+		if retcode:
+			cmd = kwargs.get("args")
+			if cmd is None:
+				cmd = popenargs[0]
+			raise subprocess.CalledProcessError(retcode, cmd)
+		return output
+	subprocess.check_output = f
+
 # Import from parent directory
 parentdir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 os.sys.path.insert(0, parentdir)

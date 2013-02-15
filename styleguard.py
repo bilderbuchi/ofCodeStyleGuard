@@ -433,7 +433,10 @@ def git_command(arg_string, repo_dir, return_output=False, log_output=True):
 		if log_output:
 			LOGGER.error(str(exc.cmd) + ' failed with exit status ' +
 						str(exc.returncode) + ':')
-			LOGGER.error(exc.output)
+			if hasattr(exc, 'output'):
+				LOGGER.error(exc.output)
+			else:
+				LOGGER.error(str(exc))
 		if return_output:
 			return exc.output
 
@@ -450,7 +453,10 @@ def style_file(my_file, style_tool_dir):
 	except subprocess.CalledProcessError as exc:
 		LOGGER.error(str(exc.cmd) + ' failed with exit status ' +
 					str(exc.returncode) + ':')
-		LOGGER.error(exc.output)
+		if hasattr(exc, 'output'):
+			LOGGER.error(exc.output)
+		else:
+			LOGGER.error(str(exc))
 
 
 def handle_payload(payload):
