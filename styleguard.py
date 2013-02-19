@@ -423,8 +423,13 @@ class PRHandlerException(Exception):
 def git_command(arg_string, repo_dir, return_output=False, log_output=True):
 	"""Execute git command in repo_dir and log output to LOGGER"""
 	try:
+		# TODO: remove this workaround when this bug in OpenShift is fixed:
+		# https://bugzilla.redhat.com/show_bug.cgi?id=912748
+		# If the GIT_DIR environment variable exists, unset it during execution
+
 		# the argument string has to be split if Shell==False in check_output
-		output = subprocess.check_output(shlex.split('git ' + arg_string),
+		output = subprocess.check_output(shlex.split('/bin/env -u GIT_DIR git ' +
+													arg_string),
 										stderr=subprocess.STDOUT, cwd=repo_dir)
 		if output and log_output:
 			LOGGER.debug(str(output).rstrip('\n'))
