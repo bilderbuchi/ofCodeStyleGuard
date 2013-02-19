@@ -439,7 +439,10 @@ def git_command(arg_string, repo_dir, return_output=False, log_output=True):
 			else:
 				LOGGER.error(str(exc))
 		if return_output:
-			return exc.output
+			if hasattr(exc, 'output'):
+				return exc.output
+			else:
+				return str(exc)
 
 
 def style_file(my_file, style_tool_dir):
