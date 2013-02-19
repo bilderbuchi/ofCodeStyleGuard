@@ -37,6 +37,7 @@ class PrHandler(threading.Thread):
 													cfg['storage_dir']))
 		self.repodir = os.path.join(self.basedir, cfg['repo_local_path'])
 		self.stylerdir = os.path.join(self.basedir, cfg['style_tool_path'])
+		LOGGER.debug('PATH: ' + os.getenv('PATH', 'unset'))
 
 		self.api_github = self.init_authentication()
 		if self.api_github == 1:
