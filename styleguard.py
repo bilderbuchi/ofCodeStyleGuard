@@ -280,13 +280,13 @@ class PrHandler(threading.Thread):
 				os.chmod(destination, os.stat(destination).st_mode | S_IEXEC)
 
 #		pr_repo.get_contents(path, pr_commit)
-
+		# TODO: redirect git output into appropriate LOGGER level
 		LOGGER.info('Creating temporary git repository')
 		git_command('init', self.repodir)
 		git_command('config core.autocrlf input', self.repodir)
 		git_command('config core.filemode false', self.repodir)
 		git_command('add .', self.repodir)
-		git_command('commit -am "PR commit"', self.repodir)
+		git_command('commit -qam "PR commit"', self.repodir)
 
 		# we end up with a clean small git repo containing the PR files
 		return changed_files
