@@ -454,8 +454,10 @@ def style_file(my_file, style_tool_dir):
 	""" Call style tool on file and log output to LOGGER"""
 	try:
 		# the argument string has to be split if Shell==False in check_output
-		output = subprocess.check_output(shlex.split('.' + os.path.sep +
-													'ofStyler ' + my_file),
+		# TODO: shlex seems to to bad things here
+		# execv() argument 1 must be encoded string without NULL bytes, not str
+		output = subprocess.check_output(shlex.split(('.' + os.path.sep +
+													'ofStyler ' + my_file).encode('ascii')),
 										stderr=subprocess.STDOUT, cwd=style_tool_dir)
 		if output:
 			LOGGER.debug(str(output).rstrip('\n'))
