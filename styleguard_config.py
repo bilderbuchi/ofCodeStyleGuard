@@ -12,6 +12,7 @@ cfg = dict(
 	# git will maintain a local repo, file will fetch fresh PR files on every run
 	feedback_method="status",
 	# 'status' for using the GH Status API, 'comment' for using normal comments
+	suppress_feedback=False,  # only create gists, don't affect the checked PR
 	logging_level=logging.DEBUG,  # DEBUG/INFO/WARNING/ERROR/CRITICAL,
 #	logfile = "logfile.log",
 	authfile='auths.json',

@@ -70,7 +70,11 @@ class PrHandler(threading.Thread):
 					elif cfg['fetch_method'] == 'file':
 						changed_files = self.file_process_pr()
 					result = self.check_style(changed_files)
-					self.publish_results(result)
+					my_gist = None
+					if result['patch_file_name']:  # There's a patch file
+						my_gist = self.create_gist(result)
+					if not cfg['suppress_feedback']:
+						self.publish_results(result, my_gist)
 				except PRHandlerException as exc:
 					LOGGER.error('An error occured in the PR handler:' + str(exc))
 				finally:
@@ -356,34 +360,32 @@ class PrHandler(threading.Thread):
 				'pr_url': pr_url,
 				'patch_file_name': patch_file_name}
 
-	def publish_results(self, result):
+	def publish_results(self, result, gist):
 		"""Report back to PR, either via Github Status API or ofbot comments"""
 		if cfg['feedback_method'] is "status":
-			self.add_status(result)
+			self.add_status(result, gist)
 		elif cfg['feedback_method'] is "comment":
-			self.add_comment(result)
+			self.add_comment(result, gist)
 		else:
 			raise PRHandlerException("Unknown feedback method: " +
 							str(cfg['feedback_method']))
 
-	def add_status(self, result):
+	def add_status(self, result, gist):
 		"""Add the relevant codestyle information via a PR Status"""
 		LOGGER.info('Adding Status info to PR')
 		repo = self.api_github.get_user('bilderbuchi').get_repo('openFrameworks')
 		commit = repo.get_commit(self.payload['pull_request']['head']['sha'])
 		# State: success, failure, error, or pending
-		if result['patch_file_name']:
-			# There's a patch file
-			my_gist = self.create_gist(result)
+		if result['patch_file_name'] and gist:
 			commit.create_status(state='failure',
-								target_url=my_gist.html_url,
+								target_url=gist.html_url,
 								description='PR does not conform to style. Click for details.')
 		else:
 			# no patch necessary-> green status
 			commit.create_status(state='success',
 								description='PR conforms to code style.')
 
-	def add_comment(self, result):
+	def add_comment(self, result, gist):
 		"""Add the relevant codestyle information via a comment on the thread"""
 		# TODO: Implement this
 		raise PRHandlerException('Feedback via comments not yet implemented.' +
