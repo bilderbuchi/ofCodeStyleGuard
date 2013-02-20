@@ -131,6 +131,7 @@ class PrHandler(threading.Thread):
 		else:
 			verified = False
 			LOGGER.warning('PR is closed!')
+			# TODO: If PR is closed, don't even check for mergeability
 		if self.payload['pull_request']['merged'] == False:
 			verified = verified and True
 		else:
@@ -257,6 +258,8 @@ class PrHandler(threading.Thread):
 #		session.close()
 
 		LOGGER.info('Fetching styler files')
+		# TODO: this should maybe pull from the integration branch (which will contain
+		# the authorative config files!)
 		# raise PRHandlerException('Fetching styler is not yet implemented. Wait for PyGithub patch')
 		# TODO: properly implement fetching styler files
 		# pr_commit = self.payload['pull_request']['head']['repo']['sha']
@@ -310,6 +313,8 @@ class PrHandler(threading.Thread):
 
 	def check_style(self, file_list):
 		"""Check style of the given list of files"""
+		# TODO: this should maybe pull from the integration branch (which will contain
+		# the authorative config files!)
 		LOGGER.info('Checking style of changed/added files')
 		file_list = self.filter_file_list(file_list)
 
@@ -426,9 +431,12 @@ def git_command(arg_string, repo_dir, return_output=False, log_output=True):
 		# TODO: remove this workaround when this bug in OpenShift is fixed:
 		# https://bugzilla.redhat.com/show_bug.cgi?id=912748
 		# If the GIT_DIR environment variable exists, unset it during execution
-
+		if os.getenv('GIT_DIR') and os.getenv('OPENSHIFT_APP_NAME'):
+			cmd_prefix = '/bin/env -u GIT_DIR '
+		else:
+			cmd_prefix = ''
 		# the argument string has to be split if Shell==False in check_output
-		output = subprocess.check_output(shlex.split('/bin/env -u GIT_DIR git ' +
+		output = subprocess.check_output(shlex.split(cmd_prefix + 'git ' +
 													arg_string),
 										stderr=subprocess.STDOUT, cwd=repo_dir)
 		if output and log_output:
