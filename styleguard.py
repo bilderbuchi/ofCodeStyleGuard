@@ -444,7 +444,7 @@ def git_command(arg_string, repo_dir, return_output=False, log_output=True):
 		if output and log_output:
 			LOGGER.debug(str(output).rstrip('\n'))
 		if return_output:
-			return str(output).rstrip('\n')
+			return str(output)
 	except subprocess.CalledProcessError as exc:
 		if log_output:
 			LOGGER.error(str(exc.cmd) + ' failed with exit status ' +
