@@ -136,7 +136,6 @@ class PrHandler(threading.Thread):
 		else:
 			verified = False
 			LOGGER.warning('PR is closed!')
-			# TODO: If PR is closed, don't even check for mergeability
 		if self.payload['pull_request']['merged'] == False:
 			verified = verified and True
 		else:
@@ -144,18 +143,19 @@ class PrHandler(threading.Thread):
 			LOGGER.warning('PR is already merged!')
 
 		# Mergeability checking is asynchronous on Github, so this has to be
-		# confirmed after receipt of the PR
-		LOGGER.info("Checking if PR is mergeable")
-		sleep(5)
-		if (self.api_github.get_repo(self.payload['repository']['full_name'])
-							.get_pull(self.payload['pull_request']['number'])
-							.mergeable == True):
-			mergeable = True
-		else:
-			mergeable = False
-			LOGGER.warning('PR is not mergeable. Not styling files.')
-			# TODO: In this case, put a Pending status on the commit
-		verified = verified and mergeable
+		# confirmed after receipt of the PR webhook
+		if verified:
+			LOGGER.info("Checking if PR is mergeable")
+			sleep(5)
+			if (self.api_github.get_repo(self.payload['repository']['full_name'])
+								.get_pull(self.payload['pull_request']['number'])
+								.mergeable == True):
+				mergeable = True
+			else:
+				mergeable = False
+				LOGGER.warning('PR is not mergeable. Not styling files.')
+				# TODO: In this case, put a Pending status on the commit
+			verified = verified and mergeable
 
 		if not verified:
 			LOGGER.warning('PR ' +
@@ -263,9 +263,8 @@ class PrHandler(threading.Thread):
 #		session.close()
 
 		LOGGER.info('Fetching styler files')
-		# TODO: this should maybe pull from the integration branch (which will contain
-		# the authorative config files!)
-		# raise PRHandlerException('Fetching styler is not yet implemented. Wait for PyGithub patch')
+		# TODO: this should maybe pull from the integration branch (which will
+		# contain the authorative config files!)
 		# TODO: properly implement fetching styler files
 		# pr_commit = self.payload['pull_request']['head']['repo']['sha']
 		pr_commit = pr_api.head.sha
@@ -318,8 +317,8 @@ class PrHandler(threading.Thread):
 
 	def check_style(self, file_list):
 		"""Check style of the given list of files"""
-		# TODO: this should maybe pull from the integration branch (which will contain
-		# the authorative config files!)
+		# TODO: this should maybe pull from the integration branch (which will
+		# contain the authorative config files!)
 		LOGGER.info('Checking style of changed/added files')
 		file_list = self.filter_file_list(file_list)
 
@@ -388,7 +387,6 @@ class PrHandler(threading.Thread):
 
 	def add_comment(self, result, gist):
 		"""Add the relevant codestyle information via a comment on the thread"""
-		# TODO: Implement this
 		raise PRHandlerException('Feedback via comments not yet implemented.' +
 									' Aborting.')
 
@@ -466,7 +464,7 @@ def style_file(my_file, style_tool_dir):
 	""" Call style tool on file and log output to LOGGER"""
 	try:
 		# the argument string has to be split if Shell==False in check_output
-		# TODO: shlex seems to to bad things here
+		# shlex seems to to bad things here, encode('ascii') as a workaround
 		# execv() argument 1 must be encoded string without NULL bytes, not str
 		output = subprocess.check_output(shlex.split(('.' + os.path.sep +
 													'ofStyler ' + my_file).encode('ascii')),

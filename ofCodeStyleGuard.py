@@ -24,7 +24,6 @@ def api_pr():
 	if origin not in styleguard.cfg['github_ips']:
 		LOGGER.warning("Origin of request UNKNOWN: " + origin)
 		return 'Error'
-	# TODO: 'proper' return objects here and below
 	else:
 		LOGGER.debug("Origin of request: " + origin)
 
