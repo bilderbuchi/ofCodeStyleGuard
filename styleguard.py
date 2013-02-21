@@ -154,7 +154,9 @@ class PrHandler(threading.Thread):
 			else:
 				mergeable = False
 				LOGGER.warning('PR is not mergeable. Not styling files.')
-				# TODO: In this case, put a Pending status on the commit
+				if not cfg['suppress_feedback']:
+					self.add_status('pending',
+							'Code style check postponed until PR is mergeable')
 			verified = verified and mergeable
 
 		if not verified:
@@ -363,27 +365,31 @@ class PrHandler(threading.Thread):
 	def publish_results(self, result, gist):
 		"""Report back to PR, either via Github Status API or ofbot comments"""
 		if cfg['feedback_method'] is "status":
-			self.add_status(result, gist)
+			if result['patch_file_name'] and gist:
+				self.add_status(state='failure',
+						target_url=gist.html_url,
+						description='PR does not conform to style. Click for details.')
+			else:
+				# no patch necessary-> green status
+				self.add_status(state='success',
+								description='PR conforms to code style.')
 		elif cfg['feedback_method'] is "comment":
 			self.add_comment(result, gist)
 		else:
 			raise PRHandlerException("Unknown feedback method: " +
 							str(cfg['feedback_method']))
 
-	def add_status(self, result, gist):
+	def add_status(self, state, description, target_url=None):
 		"""Add the relevant codestyle information via a PR Status"""
-		LOGGER.info('Adding Status info to PR')
-		repo = self.api_github.get_user('bilderbuchi').get_repo('openFrameworks')
+		LOGGER.info('Adding ' + state + ' Status to PR')
+		repo = self.api_github.get_repo(self.payload['repository']['full_name'])
 		commit = repo.get_commit(self.payload['pull_request']['head']['sha'])
 		# State: success, failure, error, or pending
-		if result['patch_file_name'] and gist:
-			commit.create_status(state='failure',
-								target_url=gist.html_url,
-								description='PR does not conform to style. Click for details.')
-		else:
-			# no patch necessary-> green status
-			commit.create_status(state='success',
-								description='PR conforms to code style.')
+		if not state in ['success', 'failure', 'error', 'pending']:
+			raise PRHandlerException('Status state ' + state + 'is invalid!')
+		commit.create_status(state=state,
+							description=description,
+							target_url=target_url)
 
 	def add_comment(self, result, gist):
 		"""Add the relevant codestyle information via a comment on the thread"""
