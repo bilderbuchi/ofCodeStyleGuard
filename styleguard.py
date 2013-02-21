@@ -32,6 +32,7 @@ class PrHandler(threading.Thread):
 		threading.Thread.__init__(self)
 		self.queue = MY_QUEUE
 		self.payload = None
+		self.reporoot = os.getenv('OPENSHIFT_REPO_DIR', '')
 		# base directory:
 		self.basedir = os.path.abspath(os.path.join(os.getcwd(),
 													cfg['storage_dir']))
@@ -396,7 +397,8 @@ class PrHandler(threading.Thread):
 
 		Return Gist object for further consumption"""
 		LOGGER.info('Creating gist')
-		with open('gist_description.md', 'r') as descfile:
+		with open(os.path.join(self.reporoot,
+							'gist_description.md'), 'r') as descfile:
 			desc_string = descfile.read().format(result['pr_number'], result['pr_url'])
 			with open(os.path.join(self.basedir, 'patches', result['patch_file_name']),
 					'r') as patchfile:
