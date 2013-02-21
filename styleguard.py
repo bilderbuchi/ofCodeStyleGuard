@@ -15,7 +15,6 @@ from time import sleep
 from styleguard_config import cfg
 from stat import S_IEXEC
 
-# TODO: Implement manual triggering of PR checks
 # TODO: log to file
 LOGGER = logging.getLogger('styleguard')
 logging.basicConfig(level=cfg['logging_level'])
@@ -267,7 +266,6 @@ class PrHandler(threading.Thread):
 		LOGGER.info('Fetching styler files')
 		# TODO: this should maybe pull from the integration branch (which will
 		# contain the authorative config files!)
-		# TODO: properly implement fetching styler files
 		# pr_commit = self.payload['pull_request']['head']['repo']['sha']
 		pr_commit = pr_api.head.sha
 		# temporary workaround
@@ -488,10 +486,16 @@ def style_file(my_file, style_tool_dir):
 
 def handle_payload(payload):
 	"""	Queue new PRs coming in during processing"""
-	LOGGER.info('Received PR ' + str(payload['number']) + ': ' +
-				payload['pull_request']['title'])
-	basedir = os.path.abspath(os.path.join(os.getcwd(), cfg['storage_dir']))
-	with open(os.path.join(basedir, 'last_payload.json'), 'w') as outfile:
-		json.dump(payload, outfile, indent=2)
-	LOGGER.debug("handing payload off to queue")
-	MY_QUEUE.put(payload)
+	if type(payload) == int:
+		# TODO: Implement manual triggering of PR checks
+		LOGGER.critical('Manual PR request not yet implemented!')
+	elif type(payload) == dict:
+		LOGGER.info('Received PR ' + str(payload['number']) + ': ' +
+					payload['pull_request']['title'])
+		basedir = os.path.abspath(os.path.join(os.getcwd(), cfg['storage_dir']))
+		with open(os.path.join(basedir, 'last_payload.json'), 'w') as outfile:
+			json.dump(payload, outfile, indent=2)
+		LOGGER.debug("handing payload off to queue")
+		MY_QUEUE.put(payload)
+	else:
+		LOGGER.error('Unknown type of payload: ' + str(type(payload)))

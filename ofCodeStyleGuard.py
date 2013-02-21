@@ -14,6 +14,26 @@ logging.getLogger('urllib3').setLevel(logging.WARNING)
 logging.getLogger('requests.packages.urllib3').setLevel(logging.INFO)
 
 
+@APP.route('/check')
+def manual_check():
+	"""Initiate manual request for checking a PR"""
+	LOGGER.info('Manual PR check has been requested')
+	LOGGER.debug('Access route: ' + str(request.access_route[:]))
+	# get the number of the requested pr (i.e. URL/check?pr=number)
+	try:
+		pr_number = int(request.args.get('pr', 0))
+	except ValueError:
+		LOGGER.error('Invalid PR ID! Skipping...')
+		return 'Error: Invalid PR ID!'
+	if pr_number:
+		LOGGER.info('PR number ' + str(pr_number))
+		styleguard.handle_payload(pr_number)
+		return ('Received request for checking PR ' + str(pr_number))
+	else:
+		LOGGER.error('Invalid PR ID! Skipping...')
+		return 'Error: Invalid PR ID!'
+
+
 @APP.route('/', methods=['POST'])
 def api_pr():
 	""" React to a received POST request"""
