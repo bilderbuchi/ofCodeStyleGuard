@@ -10,7 +10,7 @@ import github
 import Queue
 import errno
 import shutil
-from requests import Session
+from requests import Session, get
 from time import sleep
 from styleguard_config import cfg
 from stat import S_IEXEC
@@ -36,7 +36,8 @@ class PrHandler(threading.Thread):
 		self.basedir = os.path.abspath(os.path.join(os.getcwd(),
 													cfg['storage_dir']))
 		self.repodir = os.path.join(self.basedir, cfg['repo_local_path'])
-		self.stylerdir = os.path.join(self.basedir, cfg['style_tool_path'])
+		self.stylerdir = os.path.join(self.basedir, cfg['styler_local_path'])
+		# TODO: check for existence of folders in data dir, create if necessary
 		LOGGER.debug('PATH: ' + os.getenv('PATH', 'unset'))
 
 		self.api_github = self.init_authentication()
@@ -65,11 +66,8 @@ class PrHandler(threading.Thread):
 			LOGGER.info("Aquired new payload: PR " + str(self.payload["number"]))
 			if self.validate_pr():
 				try:
-					if cfg['fetch_method'] == 'git':
-						changed_files = self.git_process_pr()
-					elif cfg['fetch_method'] == 'file':
-						changed_files = self.file_process_pr()
-					result = self.check_style(changed_files)
+					filtered_files = self.get_pr()
+					result = self.check_style(filtered_files)
 					my_gist = None
 					if result['patch_file_name']:  # There's a patch file
 						my_gist = self.create_gist(result)
@@ -113,7 +111,7 @@ class PrHandler(threading.Thread):
 				return 1
 		elif cfg['feedback_method'] == "comment":
 			LOGGER.critical('Comment authorization not yet implemented!')
-#			TODO: implement comment-style PR feedback
+#			TODO: Wishlist: comment-style PR feedback
 			return 1
 		else:
 			LOGGER.error("Unknown feedback method: " +
@@ -166,6 +164,36 @@ class PrHandler(threading.Thread):
 			LOGGER.info('PR ' + str(self.payload['pull_request']["number"]) +
 						' is valid.')
 		return verified
+
+	def get_pr(self):
+		"""Get PR and styler files
+
+		Return list of files to be styled"""
+		LOGGER.info('Getting PR and styler files')
+		LOGGER.debug('Generating Github API objects')
+		api_repo = self.api_github.get_repo(self.payload['repository']['full_name'])
+		api_pr = api_repo.get_pull(self.payload['pull_request']['number'])
+
+		if cfg['fetch_method'] == 'git':
+			changed_files = self.git_process_pr()
+			filtered_file_list = self.filter_file_list(changed_files)
+		elif cfg['fetch_method'] == 'file':
+			changed_files, filtered_file_list = self.file_process_pr(api_pr)
+
+		styler_files = ['scripts/dev/style/ofStyler',
+				'scripts/dev/style/openFrameworks_style.cfg',
+				'scripts/dev/style/core_header.txt']
+		if any(stylefile in changed_files for stylefile in styler_files):
+			# Styler files have been updated in the PR, use those.
+			source = 'pr'
+			LOGGER.info('Getting styler from PR')
+		else:
+			# Styler files in base branch are the most current
+			source = 'base'
+			LOGGER.info('Getting styler from base branch')
+		self._fetch_styler_files(api_repo, api_pr, styler_files, source)
+
+		return filtered_file_list
 
 	def git_process_pr(self):
 		"""Process the PR using the git repo.
@@ -232,7 +260,7 @@ class PrHandler(threading.Thread):
 		# after this, we have a clean git repo with the PR branch checked out
 		return changed_files.split()
 
-	def file_process_pr(self):
+	def file_process_pr(self, api_pr):
 		"""Process the PR using manually fetched files.
 		This has the advantage that the disk space requirements are lower.
 
@@ -240,53 +268,30 @@ class PrHandler(threading.Thread):
 		"""
 		LOGGER.info('Starting processing of PR with fetched files')
 		LOGGER.info('Generating list of changed files')
-		pr_repo = self.api_github.get_repo(self.payload['repository']['full_name'])
-		pr_api = pr_repo.get_pull(self.payload['pull_request']['number'])
+
 		changed_files = []
+		filtered_files = []
 
 		LOGGER.info('Fetching PR files. This will take a while.')
 		session = Session()
 
-		for tmp_f in pr_api.get_files():
-			if ((tmp_f.status in ['modified', 'added'])
-			and self.filter_file_list([tmp_f.filename])):
-				changed_files.append(tmp_f.filename)  # full path from repo root
-				LOGGER.debug('Fetching ' + tmp_f.filename)
-				resp = session.get(tmp_f.raw_url)
-				destination = os.path.join(self.repodir, tmp_f.filename)
-				try:
-					os.makedirs(os.path.dirname(destination))
-				except os.error as exc:
-					if exc.errno != errno.EEXIST:
-						raise
-				with open(destination, 'wb') as store_file:
-					store_file.write(resp.content)  # pylint: disable=E1103
+		for tmp_f in api_pr.get_files():
+			if (tmp_f.status in ['modified', 'added']):
+				changed_files.append(tmp_f.filename)
+				if self.filter_file_list([tmp_f.filename]):
+					filtered_files.append(tmp_f.filename)  # full path from repo root
+					LOGGER.debug('Fetching ' + tmp_f.filename)
+					resp = session.get(tmp_f.raw_url)
+					destination = os.path.join(self.repodir, tmp_f.filename)
+					try:
+						os.makedirs(os.path.dirname(destination))
+					except os.error as exc:
+						if exc.errno != errno.EEXIST:
+							raise
+					with open(destination, 'wb') as store_file:
+						store_file.write(resp.content)  # pylint: disable=E1103
 #		session.close()
 
-		LOGGER.info('Fetching styler files')
-		# TODO: this should maybe pull from the integration branch (which will
-		# contain the authorative config files!)
-		# pr_commit = self.payload['pull_request']['head']['repo']['sha']
-		pr_commit = pr_api.head.sha
-		# temporary workaround
-		styler_files = ['scripts/dev/style/ofStyler',
-						'scripts/dev/style/openFrameworks_style.cfg',
-						'scripts/dev/style/core_header.txt']
-		for styler_file in styler_files:
-			destination = os.path.join(self.repodir, styler_file)
-			try:
-				os.makedirs(os.path.dirname(destination))
-			except os.error as exc:
-				if exc.errno != errno.EEXIST:
-					raise
-			with open(destination, 'wb') as filehandle:
-				content = pr_repo.get_contents(styler_file, pr_commit).content
-				encoding = pr_repo.get_contents(styler_file, pr_commit).encoding
-				filehandle.write(content.decode(encoding))
-			if styler_file.endswith('ofStyler'):
-				os.chmod(destination, os.stat(destination).st_mode | S_IEXEC)
-
-#		pr_repo.get_contents(path, pr_commit)
 		# TODO: redirect git output into appropriate LOGGER level
 		LOGGER.info('Creating temporary git repository')
 		git_command('init', self.repodir)
@@ -296,7 +301,38 @@ class PrHandler(threading.Thread):
 		git_command('commit -qam "PR commit"', self.repodir)
 
 		# we end up with a clean small git repo containing the PR files
-		return changed_files
+		return changed_files, filtered_files
+
+	def _fetch_styler_files(self, api_repo, api_pr, styler_files, source):
+		"""Fetch the appropriate styler files.
+
+		Use either the PR HEAD or base branch HEAD"""
+		LOGGER.info('Fetching styler files')
+		if source == 'base':
+			source_commit = api_pr.base.sha
+		elif source == 'pr':
+			source_commit = api_pr.head.sha
+		else:
+			raise PRHandlerException('Unknown source: ' + source)
+
+		# temporary workaround
+		for styler_file in styler_files:
+			LOGGER.debug('Fetching ' + styler_file)
+			# ATTENTION: For simplicity, any directories are stripped from styler_file!
+			destination = os.path.join(self.stylerdir, os.path.basename(styler_file))
+			try:
+				os.makedirs(os.path.dirname(destination))
+			except os.error as exc:
+				if exc.errno != errno.EEXIST:
+					raise
+			with open(destination, 'wb') as filehandle:
+				content = api_repo.get_contents(styler_file, source_commit).content
+				encoding = api_repo.get_contents(styler_file, source_commit).encoding
+				filehandle.write(content.decode(encoding))
+			if styler_file.endswith('ofStyler'):
+				os.chmod(destination, os.stat(destination).st_mode | S_IEXEC)
+
+#		pr_repo.get_contents(path, source_commit)
 
 	@staticmethod
 	def filter_file_list(file_list):
@@ -317,10 +353,7 @@ class PrHandler(threading.Thread):
 
 	def check_style(self, file_list):
 		"""Check style of the given list of files"""
-		# TODO: this should maybe pull from the integration branch (which will
-		# contain the authorative config files!)
 		LOGGER.info('Checking style of changed/added files')
-		file_list = self.filter_file_list(file_list)
 
 		LOGGER.info('Styling files')
 		for tmp_file in file_list:
@@ -385,9 +418,12 @@ class PrHandler(threading.Thread):
 		# State: success, failure, error, or pending
 		if not state in ['success', 'failure', 'error', 'pending']:
 			raise PRHandlerException('Status state ' + state + 'is invalid!')
-		commit.create_status(state=state,
+		if target_url:
+			commit.create_status(state=state,
 							description=description,
 							target_url=target_url)
+		else:
+			commit.create_status(state=state, description=description)
 
 	def add_comment(self, result, gist):
 		"""Add the relevant codestyle information via a comment on the thread"""
@@ -424,6 +460,8 @@ class PrHandler(threading.Thread):
 		elif cfg['fetch_method'] == 'file':
 			shutil.rmtree(self.repodir)
 			os.mkdir(self.repodir)
+		shutil.rmtree(self.stylerdir)
+		os.mkdir(self.stylerdir)
 
 
 class PRHandlerException(Exception):
@@ -488,6 +526,14 @@ def handle_payload(payload):
 	"""	Queue new PRs coming in during processing"""
 	if type(payload) == int:
 		# TODO: Implement manual triggering of PR checks
+		# need: auth token
+		# need: repo url
+		parameters ={'access_token':token}
+		# GET /repos/:owner/:repo/pulls/:number
+		url = 'https://api.github.com/repos/' + fullname + '/pulls/' + payload
+#		r = requests.get('https://api.github.com/repos/bilderbuchi/openFrameworks/pulls/1')
+		r = get('https://api.github.com/user', params=parameters )
+		payload = r.json()
 		LOGGER.critical('Manual PR request not yet implemented!')
 	elif type(payload) == dict:
 		LOGGER.info('Received PR ' + str(payload['number']) + ': ' +

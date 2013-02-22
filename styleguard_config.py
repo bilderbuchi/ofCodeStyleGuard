@@ -7,7 +7,7 @@ cfg = dict(
 	repo_git_url="git://github.com/bilderbuchi/openFrameworks.git",
 	storage_dir=os.getenv('OPENSHIFT_DATA_DIR', 'data/'),
 	repo_local_path="openFrameworks_files/",
-	style_tool_path='openFrameworks_files/scripts/dev/style/',
+	styler_local_path='styler_files/',
 	fetch_method='file',  # 'git' or 'file'
 	# git will maintain a local repo, file will fetch fresh PR files on every run
 	feedback_method="status",
