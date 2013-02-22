@@ -21,6 +21,7 @@ logging.basicConfig(level=cfg['logging_level'])
 
 logging.getLogger('github.Requester').setLevel(logging.INFO)
 MY_QUEUE = Queue.Queue()
+MY_DICT = dict(TOKEN='', OWNER_REPO='')
 
 
 class PrHandler(threading.Thread):
@@ -55,6 +56,8 @@ class PrHandler(threading.Thread):
 			if git_command('status --porcelain', self.repodir, True, False):
 				raise PRHandlerException('Local git repo is dirty!' +
 										' Correct this first!')
+		MY_DICT['OWNER_REPO'] = (cfg['repo_git_url']
+										.rstrip('.git').split('github.com/')[1])
 		self.daemon = True
 		self.start()
 
@@ -104,6 +107,7 @@ class PrHandler(threading.Thread):
 					LOGGER.critical('Authentication invalid: ' +
 								str(exception.status) + " " + str(exception.data))
 					return 1
+				MY_DICT['TOKEN'] = auths_temp['ofbot_codestyle_status']['token']
 				return gh_instance
 			else:
 				LOGGER.error('Could not authenticate for Status API' +
@@ -525,16 +529,18 @@ def style_file(my_file, style_tool_dir):
 def handle_payload(payload):
 	"""	Queue new PRs coming in during processing"""
 	if type(payload) == int:
-		# TODO: Implement manual triggering of PR checks
-		# need: auth token
-		# need: repo url
-		parameters ={'access_token':token}
+		parameters = {'access_token': MY_DICT['TOKEN']}
 		# GET /repos/:owner/:repo/pulls/:number
-		url = 'https://api.github.com/repos/' + fullname + '/pulls/' + payload
-#		r = requests.get('https://api.github.com/repos/bilderbuchi/openFrameworks/pulls/1')
-		r = get('https://api.github.com/user', params=parameters )
-		payload = r.json()
-		LOGGER.critical('Manual PR request not yet implemented!')
+		url = ('https://api.github.com/repos/' + MY_DICT['OWNER_REPO'] +
+				'/pulls/' + str(payload))
+		req = get(url, params=parameters)
+		if not req.ok:
+			LOGGER.error('An error occured getting the PR payload data: ' +
+						req.text)
+		else:
+			payload = req.json()
+			LOGGER.debug("handing payload off to queue")
+			MY_QUEUE.put(payload)
 	elif type(payload) == dict:
 		LOGGER.info('Received PR ' + str(payload['number']) + ': ' +
 					payload['pull_request']['title'])
