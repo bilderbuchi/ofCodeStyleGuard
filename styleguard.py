@@ -125,19 +125,19 @@ class PrHandler(threading.Thread):
 	def validate_pr(self):
 		"""Determine if the current PR is valid for processing"""
 		LOGGER.info('Verifying information from payload')
-		if self.payload['repository']['git_url'] == cfg['repo_git_url']:
+		if self.payload['base']['repo']['git_url'] == cfg['repo_git_url']:
 			verified = True
 		else:
 			verified = False
 			LOGGER.warning('PR git_url ' +
-							self.payload['repository']['git_url'] +
+							self.payload['base']['repo']['git_url'] +
 							' does not match config: ' + cfg['repo_git_url'])
-		if self.payload['action'] != 'closed':
+		if self.payload['state'] == 'open':
 			verified = verified and True
 		else:
 			verified = False
-			LOGGER.warning('PR is closed!')
-		if self.payload['pull_request']['merged'] == False:
+			LOGGER.warning('PR is not open!')
+		if self.payload['merged'] == False:
 			verified = verified and True
 		else:
 			verified = False
@@ -148,8 +148,8 @@ class PrHandler(threading.Thread):
 		if verified:
 			LOGGER.info("Checking if PR is mergeable")
 			sleep(5)
-			if (self.api_github.get_repo(self.payload['repository']['full_name'])
-								.get_pull(self.payload['pull_request']['number'])
+			if (self.api_github.get_repo(self.payload['base']['repo']['full_name'])
+								.get_pull(self.payload['number'])
 								.mergeable == True):
 				mergeable = True
 			else:
@@ -162,10 +162,10 @@ class PrHandler(threading.Thread):
 
 		if not verified:
 			LOGGER.warning('PR ' +
-							str(self.payload['pull_request']["number"]) +
+							str(self.payload["number"]) +
 							' is not valid.')
 		else:
-			LOGGER.info('PR ' + str(self.payload['pull_request']["number"]) +
+			LOGGER.info('PR ' + str(self.payload["number"]) +
 						' is valid.')
 		return verified
 
@@ -175,8 +175,9 @@ class PrHandler(threading.Thread):
 		Return list of files to be styled"""
 		LOGGER.info('Getting PR and styler files')
 		LOGGER.debug('Generating Github API objects')
-		api_repo = self.api_github.get_repo(self.payload['repository']['full_name'])
-		api_pr = api_repo.get_pull(self.payload['pull_request']['number'])
+		api_repo = (self.api_github.
+					get_repo(self.payload['base']['repo']['full_name']))
+		api_pr = api_repo.get_pull(self.payload['number'])
 
 		if cfg['fetch_method'] == 'git':
 			changed_files = self.git_process_pr()
@@ -215,19 +216,19 @@ class PrHandler(threading.Thread):
 		for rem in my_remotes:
 			if rem[2] == "(fetch)":
 				LOGGER.debug('Found remote ' + rem[0] + ': ' + rem[1])
-				if (rem[1] == self.payload['pull_request']['base']['repo']['git_url']
-				or rem[1] == self.payload['pull_request']['base']['repo']['ssh_url']):
+				if (rem[1] == self.payload['base']['repo']['git_url']
+				or rem[1] == self.payload['base']['repo']['ssh_url']):
 					base_remote = rem[0]
 					LOGGER.info('Base remote: ' + base_remote)
 		if base_remote is None:
 			raise PRHandlerException('Base remote does not exist yet, with URL ' +
-							self.payload['pull_request']['base']['repo']['git_url'] +
+							self.payload['base']['repo']['git_url'] +
 							' Please create it first in the local git repo.')
 
 		# update repo and check out base branch
 		LOGGER.info('Getting the base branch')
 		git_command('fetch ' + base_remote, self.repodir)
-		base_branch_name = self.payload['pull_request']['base']['ref']
+		base_branch_name = self.payload['base']['ref']
 		LOGGER.debug('Base branch name: ' + base_branch_name)
 
 		if not git_command('show-ref --verify --heads --quiet -- refs/heads/' +
@@ -246,7 +247,7 @@ class PrHandler(threading.Thread):
 								self.repodir, True, False))
 
 		LOGGER.info('Getting the PR branch')
-		pr_number = self.payload['pull_request']['number']
+		pr_number = self.payload['number']
 		pr_branch_name = 'pr-' + str(pr_number)
 		git_command('fetch ' + base_remote + ' pull/' + str(pr_number) +
 					'/head:' + pr_branch_name, self.repodir)
@@ -364,8 +365,8 @@ class PrHandler(threading.Thread):
 			style_file(os.path.abspath(os.path.join(self.repodir, tmp_file)),
 						self.stylerdir)
 		LOGGER.info('Finished styling. Checking if there were changes.')
-		pr_number = self.payload['pull_request']['number']
-		pr_url = self.payload['pull_request']['html_url']
+		pr_number = self.payload['number']
+		pr_url = self.payload['html_url']
 
 		# check if styling changed any files
 		if git_command('status --porcelain', self.repodir, True, False):
@@ -417,8 +418,8 @@ class PrHandler(threading.Thread):
 	def add_status(self, state, description, target_url=None):
 		"""Add the relevant codestyle information via a PR Status"""
 		LOGGER.info('Adding ' + state + ' Status to PR')
-		repo = self.api_github.get_repo(self.payload['repository']['full_name'])
-		commit = repo.get_commit(self.payload['pull_request']['head']['sha'])
+		repo = self.api_github.get_repo(self.payload['base']['repo']['full_name'])
+		commit = repo.get_commit(self.payload['head']['sha'])
 		# State: success, failure, error, or pending
 		if not state in ['success', 'failure', 'error', 'pending']:
 			raise PRHandlerException('Status state ' + state + 'is invalid!')
@@ -446,8 +447,7 @@ class PrHandler(threading.Thread):
 					'r') as patchfile:
 				patch_file_name = 'pr-' + str(result['pr_number']) + '.patch'
 				desc_file_name = ('OF_PR' + str(result['pr_number']) + '-' +
-					self.payload['pull_request']['head']['sha'][1:7] +
-					'.md')
+					self.payload['head']['sha'][1:7] + '.md')
 				my_gist = self.api_github.get_user().create_gist(True,
 					{desc_file_name: github.InputFileContent(desc_string),
 					patch_file_name: github.InputFileContent(patchfile.read())},
