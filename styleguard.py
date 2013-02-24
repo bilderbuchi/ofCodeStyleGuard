@@ -38,7 +38,10 @@ class PrHandler(threading.Thread):
 													cfg['storage_dir']))
 		self.repodir = os.path.join(self.basedir, cfg['repo_local_path'])
 		self.stylerdir = os.path.join(self.basedir, cfg['styler_local_path'])
-		# TODO: check for existence of folders in data dir, create if necessary
+		if not os.path.exists(self.repodir):
+			os.mkdir(self.repodir)
+		if not os.path.exists(self.stylerdir):
+			os.mkdir(self.stylerdir)
 		LOGGER.debug('PATH: ' + os.getenv('PATH', 'unset'))
 
 		self.api_github = self.init_authentication()
