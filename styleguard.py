@@ -299,9 +299,7 @@ class PrHandler(threading.Thread):
 							raise
 					with open(destination, 'wb') as store_file:
 						store_file.write(resp.content)  # pylint: disable=E1103
-#		session.close()
 
-		# TODO: redirect git output into appropriate LOGGER level
 		LOGGER.info('Creating temporary git repository')
 		git_command('init', self.repodir)
 		git_command('config core.autocrlf input', self.repodir)
