@@ -16,6 +16,7 @@ from styleguard_config import cfg
 from stat import S_IEXEC
 
 # TODO: log to file
+# TODO: Wishlist: comment-style PR feedback
 LOGGER = logging.getLogger('styleguard')
 logging.basicConfig(level=cfg['logging_level'])
 
@@ -117,9 +118,9 @@ class PrHandler(threading.Thread):
 							' with auth ofbot_codestyle_status')
 				return 1
 		elif cfg['feedback_method'] == "comment":
-			LOGGER.critical('Comment authorization not yet implemented!')
-#			TODO: Wishlist: comment-style PR feedback
-			return 1
+			raise PRHandlerException('Comment auth not yet implemented!')
+#			Wishlist: comment-style PR feedback
+#			return 1
 		else:
 			LOGGER.error("Unknown feedback method: " +
 							str(cfg['feedback_method']))
@@ -413,7 +414,9 @@ class PrHandler(threading.Thread):
 				self.add_status(state='success',
 								description='PR conforms to code style.')
 		elif cfg['feedback_method'] is "comment":
-			self.add_comment(result, gist)
+			raise PRHandlerException('Comment feedback not yet implemented.' +
+									' Aborting.')
+#			self.add_comment(result, gist)
 		else:
 			raise PRHandlerException("Unknown feedback method: " +
 							str(cfg['feedback_method']))
@@ -432,11 +435,11 @@ class PrHandler(threading.Thread):
 							target_url=target_url)
 		else:
 			commit.create_status(state=state, description=description)
-
-	def add_comment(self, result, gist):
-		"""Add the relevant codestyle information via a comment on the thread"""
-		raise PRHandlerException('Feedback via comments not yet implemented.' +
-									' Aborting.')
+#
+#	def add_comment(self, result, gist):
+#		"""Add the relevant codestyle information via a comment on the thread"""
+#		raise PRHandlerException('Feedback via comments not yet implemented.' +
+#									' Aborting.')
 
 	def create_gist(self, result):
 		"""Create gist with usage instructions and patch file.
@@ -546,7 +549,7 @@ def handle_payload(payload):
 			MY_QUEUE.put(payload)
 	elif type(payload) == dict:
 		LOGGER.info('Received PR ' + str(payload['number']) + ': ' +
-					payload['pull_request']['title'])
+					payload['title'])
 		basedir = os.path.abspath(os.path.join(os.getcwd(), cfg['storage_dir']))
 		with open(os.path.join(basedir, 'last_payload.json'), 'w') as outfile:
 			json.dump(payload, outfile, indent=2)

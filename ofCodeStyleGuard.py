@@ -48,7 +48,7 @@ def api_pr():
 		LOGGER.debug("Origin of request: " + origin)
 
 	try:
-		payload = json.loads(request.form['payload']['pull_request'])
+		payload = json.loads(request.form['payload'])['pull_request']
 	except KeyError:
 		# crutch: if an invalid request arrives locally, load a json file directly
 		if origin == '127.0.0.1':
