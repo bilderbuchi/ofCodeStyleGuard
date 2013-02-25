@@ -1,7 +1,7 @@
 from setuptools import setup
 
 setup(name='ofCodeStyleGuard',
-	version='0.1',
+	version='0.2',
 	description='Code style guard for openFrameworks',
 	author='Christoph Buchner',
 	author_email='bilderbuchi@phononoia.at',
