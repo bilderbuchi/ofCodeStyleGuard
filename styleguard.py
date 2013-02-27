@@ -4,6 +4,7 @@ import logging
 import json
 import threading
 import os
+import sys
 import subprocess
 import shlex
 import github
@@ -17,8 +18,32 @@ from stat import S_IEXEC
 
 # TODO: log to file
 # TODO: Wishlist: comment-style PR feedback
+
+
+class LessThanLevelFilter(logging.Filter):  # pylint: disable=R0903
+	"""Custom logging filter which only passes events below passlevel"""
+	def __init__(self, passlevel):
+		super(LessThanLevelFilter, self).__init__()
+		self.passlevel = passlevel
+
+	def filter(self, record):
+		return (record.levelno < self.passlevel)
+
+
 LOGGER = logging.getLogger('styleguard')
-logging.basicConfig(level=cfg['logging_level'])
+MY_FORMAT = "%(levelname)s\t%(message)s"
+#Warning and above goes to stderr
+eh = logging.StreamHandler(sys.stderr)  # pylint: disable=C0103
+eh.setFormatter(logging.Formatter(MY_FORMAT))
+eh.setLevel(logging.WARNING)
+# everything from Debug to Info goes to stdout
+sh = logging.StreamHandler(sys.stdout)  # pylint: disable=C0103
+sh.setFormatter(logging.Formatter(MY_FORMAT))
+sh.setLevel(logging.DEBUG)
+sh.addFilter(LessThanLevelFilter(logging.WARNING))
+LOGGER.addHandler(eh)
+LOGGER.addHandler(sh)
+LOGGER.setLevel(cfg['logging_level'])
 
 logging.getLogger('github.Requester').setLevel(logging.INFO)
 MY_QUEUE = Queue.Queue()
