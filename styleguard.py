@@ -15,8 +15,9 @@ from requests import Session, get
 from time import sleep
 from styleguard_config import cfg
 from stat import S_IEXEC
+from datetime import datetime
+from logging.handlers import TimedRotatingFileHandler
 
-# TODO: log to file
 # TODO: Wishlist: comment-style PR feedback
 
 
@@ -95,7 +96,9 @@ class PrHandler(threading.Thread):
 			LOGGER.info("Waiting in worker run()")
 #			LOGGER.debug('run self.queue id: ' + str(id(self.queue)))
 			self.payload = self.queue.get()
+			LOGGER.info(60 * '*')
 			LOGGER.info("Aquired new payload: PR " + str(self.payload["number"]))
+			LOGGER.info('UTC time: ' + str(datetime.utcnow()))
 			if self.validate_pr():
 				try:
 					filtered_files = self.get_pr()
@@ -580,3 +583,19 @@ def handle_payload(payload):
 		MY_QUEUE.put(payload)
 	else:
 		LOGGER.error('Unknown type of payload: ' + str(type(payload)))
+
+
+def add_file_logger():
+	"""Enable logging to file"""
+	if 'logfile' in cfg and cfg['logfile']:
+		logdir = os.path.abspath(os.path.join(os.getcwd(),
+											cfg['storage_dir'], 'logs'))
+		if not os.path.exists(logdir):
+			os.mkdir(logdir)
+		logfile = os.path.join(logdir, cfg['logfile'])
+		# Add file logger. Rotate every midnight, keep 14 days of files
+		filehandler = TimedRotatingFileHandler(logfile, when='midnight',
+			backupCount=14, utc=True)
+		filehandler.setFormatter(logging.Formatter(MY_FORMAT))
+		root_logger = logging.getLogger()
+		root_logger.addHandler(filehandler)

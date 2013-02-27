@@ -12,6 +12,8 @@ APP = Flask(__name__)
 APP.logger.setLevel(styleguard.cfg['logging_level'])
 logging.getLogger('urllib3').setLevel(logging.WARNING)
 logging.getLogger('requests.packages.urllib3').setLevel(logging.INFO)
+# Add a file handler to the root logger if log filename is set
+styleguard.add_file_logger()
 
 
 @APP.route('/check')
@@ -37,6 +39,7 @@ def manual_check():
 @APP.route('/', methods=['POST'])
 def api_pr():
 	""" React to a received POST request"""
+	WEBLOGGER.info(60 * "#")
 	WEBLOGGER.info("Received POST request.")
 	WEBLOGGER.debug('Access route: ' + str(request.access_route[:]))
 	origin = request.access_route[0]

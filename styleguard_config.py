@@ -3,7 +3,7 @@ import logging
 import os
 
 # dictionary with configuration parameters
-cfg = dict(
+cfg = dict(  # pylint: disable=C0103
 	repo_git_url="git://github.com/bilderbuchi/openFrameworks.git",
 	storage_dir=os.getenv('OPENSHIFT_DATA_DIR', 'data/'),
 	repo_local_path="openFrameworks_files/",
@@ -14,7 +14,7 @@ cfg = dict(
 	# 'status' for using the GH Status API, 'comment' for using normal comments
 	suppress_feedback=False,  # only create gists, don't affect the checked PR
 	logging_level=logging.DEBUG,  # DEBUG/INFO/WARNING/ERROR/CRITICAL,
-#	logfile = "logfile.log",
+	logfile='ofCodeStyleGuard.log',
 	authfile='auths.json',
 #
 #	Web server configuration:
