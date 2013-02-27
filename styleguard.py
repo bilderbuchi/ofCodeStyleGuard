@@ -24,7 +24,9 @@ from logging.handlers import TimedRotatingFileHandler
 class LessThanLevelFilter(logging.Filter):  # pylint: disable=R0903
 	"""Custom logging filter which only passes events below passlevel"""
 	def __init__(self, passlevel):
-		super(LessThanLevelFilter, self).__init__()
+		# TODO: workaround: In python 2.6, logging.Filter is old-style class
+		# super(LessThanLevelFilter, self).__init__()
+		logging.Filter.__init__(self)
 		self.passlevel = passlevel
 
 	def filter(self, record):
